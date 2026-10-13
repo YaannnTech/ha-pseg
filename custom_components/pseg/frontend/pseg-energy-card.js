@@ -22,15 +22,6 @@ class PsegEnergyCard extends HTMLElement {
   static getStubConfig() {
     return {
       entity: "sensor.pseg_electricity_consumption",
-      cost_per_kwh: 0.22,
-      cycle_days: 30,
-      days: 14,
-      last_cycle_kwh: 168.0,
-      toggle_entity: "input_boolean.pseg_display_dollars",
-      range_toggle_entity: "input_boolean.pseg_chart_14d",
-      next_update_entity: "sensor.pseg_next_update",
-      show_next_update: false,
-      popup_hash: "#pseg_energy_popup"
     };
   }
 
@@ -43,15 +34,15 @@ class PsegEnergyCard extends HTMLElement {
       throw new Error("PSEG Energy Card: Please specify an entity");
     }
     this.config = {
-      cost_per_kwh: 0.22,
+      cost_per_kwh: null,
       cycle_days: 30,
       days: 14,
-      last_cycle_kwh: 168.0,
+      last_cycle_kwh: null,
       toggle_entity: "input_boolean.pseg_display_dollars",
       range_toggle_entity: "input_boolean.pseg_chart_14d",
       next_update_entity: "sensor.pseg_next_update",
       show_next_update: false,
-      popup_hash: "#pseg_energy_popup",
+      popup_hash: null,
       ...config
     };
     if (!this.shadowRoot) {
@@ -157,9 +148,20 @@ class PsegEnergyCard extends HTMLElement {
       daysToShow = this._hass.states[rangeToggleEnt].state === "on" ? 14 : 7;
     }
 
-    const rate = parseFloat(this.config.cost_per_kwh) || 0.22;
+    // Auto-derive effective electric rate from actual entity readings if not explicitly configured
+    let autoRate = 0.247;
+    const latestKwhVal = parseFloat(entity.attributes.latest_kwh) || parseFloat(entity.state) || 0;
+    const latestCostVal = parseFloat(entity.attributes.latest_cost) || 0;
+    if (latestKwhVal > 0 && latestCostVal > 0) {
+      autoRate = parseFloat((latestCostVal / latestKwhVal).toFixed(3));
+    }
+    const rate = (this.config.cost_per_kwh != null && !isNaN(parseFloat(this.config.cost_per_kwh)))
+      ? parseFloat(this.config.cost_per_kwh)
+      : autoRate;
+
     const cycleDays = parseInt(this.config.cycle_days) || 30;
-    const lastCycleKwh = parseFloat(this.config.last_cycle_kwh) || 168.0;
+    const hasLastCycle = this.config.last_cycle_kwh != null && !isNaN(parseFloat(this.config.last_cycle_kwh));
+    const lastCycleKwh = hasLastCycle ? parseFloat(this.config.last_cycle_kwh) : 0;
 
     const rawHistory = entity.attributes.history_14d || [];
     const latestRawDate = entity.attributes.latest_date || "";
@@ -248,11 +250,19 @@ class PsegEnergyCard extends HTMLElement {
 
     // Cycle Projection & comparison vs last cycle
     const projKwh = avgKwh * cycleDays;
-    const projDiffPct = lastCycleKwh > 0 ? ((projKwh - lastCycleKwh) / lastCycleKwh) * 100 : 0;
-    const isProjHigher = projDiffPct > 0;
-    const absProjDiff = Math.abs(projDiffPct).toFixed(0);
-    const projArrowSymbol = isProjHigher ? "↑" : "↓";
-    const projPillClass = isProjHigher ? "pill-amber" : "pill-green";
+    let projDiffBadge = "";
+    if (hasLastCycle && lastCycleKwh > 0) {
+      const projDiffPct = ((projKwh - lastCycleKwh) / lastCycleKwh) * 100;
+      const isProjHigher = projDiffPct > 0;
+      const absProjDiff = Math.abs(projDiffPct).toFixed(0);
+      const projArrowSymbol = isProjHigher ? "↑" : "↓";
+      const projPillClass = isProjHigher ? "pill-amber" : "pill-green";
+      projDiffBadge = `
+        <span class="diff-pill ${projPillClass}" title="${projDiffPct >= 0 ? '+' : ''}${projDiffPct.toFixed(0)}% vs last cycle">
+          ${projArrowSymbol}${absProjDiff}%
+        </span>
+      `;
+    }
 
     // Single-unit string representations for header mini stats
     const latestDisplay = this.formatPrecision(latestKwh, isDollars, rate);
@@ -525,14 +535,12 @@ class PsegEnergyCard extends HTMLElement {
               </div>
             </div>
 
-            <!-- Projection with vs last cycle diff badge -->
+            <!-- Projection (Cycle) -->
             <div class="stat-item">
               <span class="stat-label">Proj (Cycle)</span>
               <div class="stat-val-row">
                 <span class="stat-val">${projDisplay}</span>
-                <span class="diff-pill ${projPillClass}" title="${projDiffPct >= 0 ? '+' : ''}${projDiffPct.toFixed(0)}% vs last cycle">
-                  ${projArrowSymbol}${absProjDiff}%
-                </span>
+                ${projDiffBadge}
               </div>
             </div>
 

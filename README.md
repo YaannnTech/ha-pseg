@@ -51,30 +51,40 @@ Includes an ultra-compact, custom **PSEG Energy Card** with interactive 7-day vs
 
 The integration bundles `pseg-energy-card.js`. It automatically registers in your Lovelace card picker.
 
-### Example Card Configuration
+### Basic Card Configuration (Zero-Config)
+
+For most users, simply specify the entity. The card automatically derives your electric rate from actual meter readings and opens the standard Home Assistant entity dialog on tap:
 
 ```yaml
 type: custom:pseg-energy-card
 entity: sensor.pseg_electricity_consumption
-cost_per_kwh: 0.22
-cycle_days: 30
-last_cycle_kwh: 168.0
-popup_hash: "#pseg_energy_popup"
+```
+
+### Advanced Card Configuration (Custom Popups & Baselines)
+
+```yaml
+type: custom:pseg-energy-card
+entity: sensor.pseg_electricity_consumption
+cost_per_kwh: 0.22                 # Optional: Override auto-calculated rate ($/kWh)
+cycle_days: 30                     # Optional: Billing cycle length in days (default: 30)
+last_cycle_kwh: 168.0              # Optional: Compare projection against prior bill total
+show_next_update: true             # Optional: Render next scheduled pull time beside meter label
+popup_hash: "#pseg_energy_popup"   # Optional: Navigate to custom Bubble Card / browser popup (defaults to native HA more-info)
 ```
 
 ### Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `entity` | string | `sensor.pseg_electricity_consumption` | Entity providing daily kWh and `history_14d` |
-| `cost_per_kwh` | number | `0.22` | Electric rate in $/kWh |
-| `cycle_days` | number | `30` | Billing cycle duration in days |
-| `last_cycle_kwh` | number | `168.0` | Previous cycle total for projection comparison |
-| `toggle_entity` | string | `input_boolean.pseg_display_dollars` | Toggle entity for kWh vs $ display |
-| `range_toggle_entity` | string | `input_boolean.pseg_chart_14d` | Toggle entity for 7d vs 14d chart range |
+| `entity` | string | `sensor.pseg_electricity_consumption` | Primary entity providing daily kWh and `history_14d` |
+| `cost_per_kwh` | number | *Auto-calculated* | Optional manual rate override ($/kWh). If omitted, automatically derived from actual meter readings. |
+| `cycle_days` | number | `30` | Billing cycle duration in days for monthly usage projections |
+| `last_cycle_kwh` | number | *None* | Optional previous cycle total (kWh) to display a ±% comparison badge |
+| `toggle_entity` | string | `input_boolean.pseg_display_dollars` | Optional toggle helper for kWh vs $ switching |
+| `range_toggle_entity` | string | `input_boolean.pseg_chart_14d` | Optional toggle helper for 7d vs 14d chart switching |
 | `next_update_entity` | string | `sensor.pseg_next_update` | Entity providing next scheduled data pull timestamp |
 | `show_next_update` | boolean | `false` | When true, renders next pull time beside meter label |
-| `popup_hash` | string | `#pseg_energy_popup` | Hash for popup navigation on card tap |
+| `popup_hash` | string | *None* | Optional popup hash (e.g. `#pseg_energy_popup`). If omitted, opens native Home Assistant more-info modal. |
 
 ---
 
