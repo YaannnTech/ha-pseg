@@ -3,12 +3,12 @@
     "step": {
       "user": {
         "title": "PSE&G Account Sign-In",
-        "description": "Enter your PSE&G online credentials to authenticate via the local login service, or paste your session cookie directly for instant setup.",
+        "description": "Choose one of two ways to connect your PSE&G account:\n\n**Option A: Automated Sign-In (Recommended)**\nEnter your **Username** and **Password** below, select your MFA delivery method, and leave the Cookie field empty. If a verification code is needed, you will be prompted on the next screen.\n\n**Option B: Direct Session Cookie**\nPaste your active browser cookie below (leave Username & Password empty).\n*How to get it:* Log into https://mysmartenergy.nj.pseg.com in your browser, open Developer Tools (F12) → Network tab → click any request (e.g. `Dashboard`) → copy the `Cookie` request header.\n",
         "data": {
-          "username": "Username / User ID (Optional if cookie provided)",
-          "password": "Password (Optional if cookie provided)",
-          "mfa_method": "MFA Delivery Method",
-          "cookie": "Session Cookie (Optional for instant setup)"
+          "username": "Username (Option A: Leave empty if using Cookie)",
+          "password": "Password (Option A: Leave empty if using Cookie)",
+          "mfa_method": "MFA Delivery Method (for Option A)",
+          "cookie": "Session Cookie (Option B: Leave empty if using Username/Password)"
         }
       },
       "mfa": {

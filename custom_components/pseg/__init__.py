@@ -22,12 +22,14 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up PSE&G integration wide configuration and register Lovelace resource."""
     frontend_path = Path(__file__).parent / "frontend" / "pseg-energy-card.js"
     if frontend_path.exists():
-        hass.http.register_static_path(
-            "/pseg/pseg-energy-card.js",
-            str(frontend_path),
-            cache_headers=False,
-        )
-        _LOGGER.debug("Registered static path for PSEG custom card: /pseg/pseg-energy-card.js")
+        try:
+            from homeassistant.components.http import StaticPathConfig
+            await hass.http.async_register_static_paths([
+                StaticPathConfig("/pseg/pseg-energy-card.js", str(frontend_path), False)
+            ])
+            _LOGGER.debug("Registered static path for PSEG custom card: /pseg/pseg-energy-card.js")
+        except Exception as err:
+            _LOGGER.debug("Could not register static path: %s", err)
 
     return True
 
