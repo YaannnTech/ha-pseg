@@ -1,12 +1,12 @@
 {
   "domain": "pseg",
   "name": "PSE&G Energy (New Jersey)",
-  "codeowners": ["@sidprak"],
+  "codeowners": ["@sidprax"],
   "config_flow": true,
-  "documentation": "https://github.com/sidprak/ha-pseg",
+  "documentation": "https://github.com/sidprax/ha-pseg",
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/sidprak/ha-pseg/issues",
+  "issue_tracker": "https://github.com/sidprax/ha-pseg/issues",
   "requirements": ["selenium>=4.15.0", "SpeechRecognition>=3.10.0"],
   "version": "1.0.0"
 }

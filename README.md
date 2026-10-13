@@ -1,7 +1,7 @@
 # PSE&G Energy (New Jersey) for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/default)
-[![GitHub Release](https://img.shields.io/github/v/release/sidprak/ha-pseg)](https://github.com/sidprak/ha-pseg/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/sidprax/ha-pseg)](https://github.com/sidprax/ha-pseg/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A Home Assistant custom integration for **Public Service Electric and Gas (PSE&G)** customers in New Jersey. Automatically retrieves your daily electric meter readings, costs, and historical energy trends directly from the PSE&G MySmartEnergy portal (MyMeter platform).
@@ -27,7 +27,7 @@ Includes an ultra-compact, custom **PSEG Energy Card** with interactive 7-day vs
 2. Click the three dots (top right) and select **Custom repositories**.
 3. Paste the repository URL:
    ```text
-   https://github.com/sidprak/ha-pseg
+   https://github.com/sidprax/ha-pseg
    ```
 4. Set the Category to **Integration** and click **Add**.
 5. Find **PSE&G Energy (New Jersey)**, click **Download**, and restart Home Assistant.
