@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from homeassistant.components.sensor import (
@@ -12,6 +13,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy, UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -31,6 +33,8 @@ from .const import (
 )
 from .coordinator import PsegDataUpdateCoordinator
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -40,12 +44,40 @@ async def async_setup_entry(
     """Set up PSE&G sensor entries."""
     coordinator: PsegDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
+    # Migrate legacy entity unique IDs and entity IDs from 'yesterday' naming
+    try:
+        ent_reg = er.async_get(hass)
+        migrations = [
+            ("electricity_yesterday", "electricity_consumption"),
+            ("electricity_cost_yesterday", "electricity_cost"),
+            ("outdoor_temperature_yesterday", "outdoor_temperature"),
+        ]
+        for old_suffix, new_suffix in migrations:
+            old_uid = f"{entry.entry_id}_{old_suffix}"
+            new_uid = f"{entry.entry_id}_{new_suffix}"
+            old_ent_id = ent_reg.async_get_entity_id("sensor", DOMAIN, old_uid)
+            if old_ent_id:
+                _LOGGER.info(
+                    "Migrating entity %s (UID: %s) -> (UID: %s, Entity ID: sensor.pseg_%s)",
+                    old_ent_id,
+                    old_uid,
+                    new_uid,
+                    new_suffix,
+                )
+                ent_reg.async_update_entity(
+                    old_ent_id,
+                    new_unique_id=new_uid,
+                    new_entity_id=f"sensor.pseg_{new_suffix}",
+                )
+    except Exception as err:
+        _LOGGER.warning("Could not run entity registry migration: %s", err)
+
     entities = [
-        PsegElectricityYesterdaySensor(coordinator, entry),
-        PsegElectricityCostYesterdaySensor(coordinator, entry),
+        PsegElectricityConsumptionSensor(coordinator, entry),
+        PsegElectricityCostSensor(coordinator, entry),
         PsegElectricityMeterSensor(coordinator, entry),
         PsegElectricityLatestDateSensor(coordinator, entry),
-        PsegTemperatureYesterdaySensor(coordinator, entry),
+        PsegTemperatureSensor(coordinator, entry),
     ]
 
     async_add_entities(entities)
@@ -70,22 +102,23 @@ class PsegBaseSensor(CoordinatorEntity[PsegDataUpdateCoordinator], SensorEntity)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name="PSE&G",
-            manufacturer="PSE&G",
-            model="MyMeter AMI",
+            manufacturer="Public Service Enterprise Group",
+            model="Smart AMI Meter",
         )
         self.entity_id = f"sensor.pseg_{key}"
 
 
-class PsegElectricityYesterdaySensor(PsegBaseSensor):
-    """Sensor for yesterday's electricity consumption in kWh."""
+class PsegElectricityConsumptionSensor(PsegBaseSensor):
+    """Sensor for electricity consumption in kWh."""
 
-    _attr_name = "Electricity Yesterday"
+    _attr_name = "Electricity Consumption"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_icon = "mdi:lightning-bolt"
 
     def __init__(self, coordinator: PsegDataUpdateCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry, "electricity_yesterday")
+        super().__init__(coordinator, entry, "electricity_consumption")
 
     @property
     def native_value(self) -> Optional[float]:
@@ -113,16 +146,16 @@ class PsegElectricityYesterdaySensor(PsegBaseSensor):
         }
 
 
-class PsegElectricityCostYesterdaySensor(PsegBaseSensor):
-    """Sensor for yesterday's electricity cost in USD."""
+class PsegElectricityCostSensor(PsegBaseSensor):
+    """Sensor for electricity cost in USD."""
 
-    _attr_name = "Electricity Cost Yesterday"
+    _attr_name = "Electricity Cost"
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = "USD"
     _attr_icon = "mdi:currency-usd"
 
     def __init__(self, coordinator: PsegDataUpdateCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry, "electricity_cost_yesterday")
+        super().__init__(coordinator, entry, "electricity_cost")
 
     @property
     def native_value(self) -> Optional[float]:
@@ -164,15 +197,16 @@ class PsegElectricityLatestDateSensor(PsegBaseSensor):
         return self.coordinator.data.get("latest_date")
 
 
-class PsegTemperatureYesterdaySensor(PsegBaseSensor):
+class PsegTemperatureSensor(PsegBaseSensor):
     """Sensor for the outdoor average temperature."""
 
-    _attr_name = "Outdoor Temperature Yesterday"
+    _attr_name = "Outdoor Temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
+    _attr_icon = "mdi:thermometer"
 
     def __init__(self, coordinator: PsegDataUpdateCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry, "outdoor_temperature_yesterday")
+        super().__init__(coordinator, entry, "outdoor_temperature")
 
     @property
     def native_value(self) -> Optional[float]:

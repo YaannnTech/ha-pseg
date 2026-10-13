@@ -2,28 +2,38 @@
   "config": {
     "step": {
       "user": {
-        "title": "PSE&G Account Sign-In",
-        "description": "Choose one of two ways to connect your PSE&G account:\n\n**Option A: Automated Sign-In (Recommended)**\nEnter your **Username** and **Password** below, select your MFA delivery method, and leave the Cookie field empty. If a verification code is needed, you will be prompted on the next screen.\n\n**Option B: Direct Session Cookie**\nPaste your active browser cookie below (leave Username & Password empty).\n*How to get it:* Log into https://mysmartenergy.nj.pseg.com in your browser, open Developer Tools (F12) → Network tab → click any request (e.g. `Dashboard`) → copy the `Cookie` request header.\n",
+        "title": "Connect PSE&G Account",
+        "description": "Select how you would like to connect your PSE&G MySmartEnergy account:"
+      },
+      "automated": {
+        "title": "Automated Sign-In",
+        "description": "Enter your PSE&G online credentials. If two-factor authentication is requested by Okta, you will be prompted for your one-time verification code on the next step.",
         "data": {
-          "username": "Username (Option A: Leave empty if using Cookie)",
-          "password": "Password (Option A: Leave empty if using Cookie)",
-          "mfa_method": "MFA Delivery Method (for Option A)",
-          "cookie": "Session Cookie (Option B: Leave empty if using Username/Password)"
+          "username": "Username or Email",
+          "password": "Password",
+          "mfa_method": "Two-Factor Method (SMS or Email)"
         }
       },
       "mfa": {
         "title": "Two-Factor Verification",
-        "description": "A 6-digit verification code was sent to your registered phone or email. Enter the code below to complete setup.",
+        "description": "A 6-digit verification code has been sent to your selected phone or email. Enter the code below to complete setup.",
         "data": {
           "mfa_code": "6-Digit Security Code"
+        }
+      },
+      "cookie": {
+        "title": "Browser Session Cookie",
+        "description": "Authenticate directly using an active session cookie from your web browser.\n\n**How to get your cookie:**\n1. In your browser, log in to [mysmartenergy.nj.pseg.com](https://mysmartenergy.nj.pseg.com)\n2. Press **F12** (or right-click → **Inspect**) to open Developer Tools\n3. Click the **Network** tab, then refresh the page (F5)\n4. Click any request to mysmartenergy.nj.pseg.com (e.g. `Dashboard`)\n5. In **Request Headers**, copy the full value of the `Cookie:` header and paste it below.",
+        "data": {
+          "cookie": "Session Cookie"
         }
       }
     },
     "error": {
-      "missing_credentials": "Enter your Username and Password, or provide a session cookie.",
-      "invalid_auth": "Authentication failed. Please verify your credentials or check the helper log.",
-      "invalid_cookie": "The session cookie provided was rejected or expired.",
-      "auth_server_unavailable": "Could not connect to the local automated login service on port 8000. You can also paste your session cookie directly.",
+      "missing_credentials": "Please fill in all required fields.",
+      "invalid_auth": "Authentication failed. Please verify your username and password.",
+      "invalid_cookie": "The session cookie provided was rejected or has expired.",
+      "auth_server_unavailable": "Could not connect to the local automated sign-in service on port 8000. Alternatively, choose 'Browser Session Cookie' from the menu.",
       "invalid_code": "The verification code entered is invalid or expired.",
       "unknown": "An unexpected error occurred while communicating with PSE&G."
     },

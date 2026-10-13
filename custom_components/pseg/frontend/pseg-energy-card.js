@@ -21,7 +21,7 @@
 class PsegEnergyCard extends HTMLElement {
   static getStubConfig() {
     return {
-      entity: "sensor.pseg_electricity_yesterday",
+      entity: "sensor.pseg_electricity_consumption",
       cost_per_kwh: 0.22,
       cycle_days: 30,
       days: 14,
@@ -131,7 +131,8 @@ class PsegEnergyCard extends HTMLElement {
 
     let entity = this._hass.states[this.config.entity];
     if (!entity) {
-      entity = this._hass.states["sensor.pseg_electricity_yesterday"] || 
+      entity = this._hass.states["sensor.pseg_electricity_consumption"] ||
+               this._hass.states["sensor.pseg_electricity_yesterday"] || 
                this._hass.states["sensor.pseg_smart_energy_meter_electricity_yesterday"];
     }
     if (!entity) {

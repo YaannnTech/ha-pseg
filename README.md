@@ -12,10 +12,12 @@ Includes an ultra-compact, custom **PSEG Energy Card** with interactive 7-day vs
 
 ## ✨ Features
 
-- 🔐 **Guided Setup with 2FA / MFA Support**: Enter your standard PSE&G credentials via the Home Assistant UI; receive your 6-digit SMS or Email code and verify directly in the setup modal without manual cookie extraction.
-- ⚡ **Accurate Daily Readings**: Fetches official smart meter readings (`sensor.pseg_electricity_yesterday`) matching the portal down to the decimal point.
-- 💵 **Cost Tracking**: Captures daily electric costs (`sensor.pseg_electricity_cost_yesterday`) in USD.
-- 🌡️ **Weather Integration**: Automatically extracts outdoor temperature ranges (daily min, max, avg) recorded alongside meter readings.
+- 🔐 **Multi-Step Guided Setup**:
+  - **Automated Sign-In (Recommended)**: Enter your PSE&G online credentials; if challenged by Okta, enter your 6-digit SMS or Email verification code in the modal.
+  - **Browser Session Cookie**: Direct cookie authentication for users who prefer manual token provisioning.
+- ⚡ **Accurate Daily Readings**: Fetches official smart meter readings (`sensor.pseg_electricity_consumption`) matching the portal down to the decimal point.
+- 💵 **Cost Tracking**: Captures daily electric costs (`sensor.pseg_electricity_cost`) in USD.
+- 🌡️ **Weather Integration**: Automatically extracts outdoor temperature ranges (`sensor.pseg_outdoor_temperature`) recorded alongside meter readings.
 - 📊 **14-Day History Attributes**: Provides 14-day energy & cost history within entity state attributes for high-speed local charting.
 - 🎨 **Built-In Ultra-Minimal Card**: Includes the `pseg-energy-card` which automatically registers in the Lovelace card picker (`Add Card` -> `PSEG Energy Card`).
 
@@ -38,9 +40,10 @@ Includes an ultra-compact, custom **PSEG Energy Card** with interactive 7-day vs
 
 1. Go to **Settings** > **Devices & Services** > **Add Integration**.
 2. Search for **PSE&G Energy (New Jersey)**.
-3. Enter your PSE&G **Username** and **Password**, and select your preferred verification method (**SMS** or **Email**).
-4. When prompted, enter the **6-digit verification code** sent to your phone or email.
-5. Click **Submit**. Your smart meter sensor and history are now configured!
+3. Select your preferred setup method:
+   - **Automated Sign-In**: Enter Username, Password, and MFA delivery method (SMS or Email). If Okta requests 2FA, enter the 6-digit code when prompted.
+   - **Browser Session Cookie**: Paste your active session cookie from `mysmartenergy.nj.pseg.com`.
+4. Click **Submit**. Your smart meter sensors and 14-day history are ready!
 
 ---
 
@@ -52,18 +55,24 @@ The integration bundles `pseg-energy-card.js`. It automatically registers in you
 
 ```yaml
 type: custom:pseg-energy-card
-entity: sensor.pseg_electricity_yesterday
-cost_entity: sensor.pseg_electricity_cost_yesterday
+entity: sensor.pseg_electricity_consumption
+cost_per_kwh: 0.22
+cycle_days: 30
+last_cycle_kwh: 168.0
+popup_hash: "#pseg_energy_popup"
 ```
 
 ### Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `entity` | string | `sensor.pseg_electricity_yesterday` | Entity providing daily kWh and `history_14d` |
-| `cost_entity` | string | `sensor.pseg_electricity_cost_yesterday` | Optional entity providing yesterday's cost in USD |
-| `display_dollars` | boolean | `false` | When true, renders bars in dollars ($) instead of kWh |
-| `chart_14d` | boolean | `true` | When true, displays 14 days of history; false displays 7 days |
+| `entity` | string | `sensor.pseg_electricity_consumption` | Entity providing daily kWh and `history_14d` |
+| `cost_per_kwh` | number | `0.22` | Electric rate in $/kWh |
+| `cycle_days` | number | `30` | Billing cycle duration in days |
+| `last_cycle_kwh` | number | `168.0` | Previous cycle total for projection comparison |
+| `toggle_entity` | string | `input_boolean.pseg_display_dollars` | Toggle entity for kWh vs $ display |
+| `range_toggle_entity` | string | `input_boolean.pseg_chart_14d` | Toggle entity for 7d vs 14d chart range |
+| `popup_hash` | string | `#pseg_energy_popup` | Hash for popup navigation on card tap |
 
 ---
 

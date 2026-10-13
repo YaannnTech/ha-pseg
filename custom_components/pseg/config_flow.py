@@ -9,7 +9,6 @@ import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
@@ -31,7 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for PSE&G Energy."""
+    """Handle a multi-step guided config flow for PSE&G Energy."""
 
     VERSION = 1
 
@@ -42,40 +41,27 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        """Handle the initial step."""
+        """Step 1: Choose connection method."""
+        return self.async_show_menu(
+            step_id="user",
+            menu_options=["automated", "cookie"],
+        )
+
+    async def async_step_automated(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Step 2a: Automated sign-in with username, password, and MFA channel."""
         errors: Dict[str, str] = {}
 
         if user_input is not None:
-            cookie = user_input.get(CONF_COOKIE, "").strip()
             username = user_input.get(CONF_USERNAME, "").strip()
             password = user_input.get(CONF_PASSWORD, "").strip()
             mfa_method = user_input.get(CONF_MFA_METHOD, DEFAULT_MFA_METHOD)
-            auth_url = user_input.get(CONF_AUTH_SERVER_URL, DEFAULT_AUTH_SERVER_URL)
+            auth_url = DEFAULT_AUTH_SERVER_URL
 
-            # Option 1: Direct Cookie authentication
-            if cookie:
-                try:
-                    client = PsegClient(cookie)
-                    await self.hass.async_add_executor_job(client.test_connection)
-                    title = f"PSE&G ({username})" if username else "PSE&G Energy"
-                    return self.async_create_entry(
-                        title=title,
-                        data={
-                            CONF_COOKIE: cookie,
-                            CONF_USERNAME: username,
-                            CONF_PASSWORD: password,
-                        },
-                    )
-                except PsegAuthError as err:
-                    _LOGGER.error("Cookie validation error: %s", err)
-                    errors["base"] = "invalid_cookie"
-                except Exception as err:
-                    _LOGGER.exception("Unexpected error validating cookie: %s", err)
-                    errors["base"] = "unknown"
-
-            # Option 2: Automated Login via local auth service
-            elif username and password:
-                self._user_input = user_input
+            if not username or not password:
+                errors["base"] = "missing_credentials"
+            else:
                 self.context["username"] = username
                 self.context["password"] = password
                 self.context["auth_url"] = auth_url
@@ -94,8 +80,10 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             if resp.status == 200:
                                 res_json = await resp.json()
                                 if res_json.get("success") and res_json.get("cookies"):
-                                    # Already logged in without MFA
+                                    # Authenticated directly without MFA challenge
                                     cookies = res_json["cookies"]
+                                    await self.async_set_unique_id(username.lower())
+                                    self._abort_if_unique_id_configured()
                                     return self.async_create_entry(
                                         title=f"PSE&G ({username})",
                                         data={
@@ -105,9 +93,10 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                         },
                                     )
                                 elif res_json.get("mfa_required"):
-                                    # MFA code required -> transition to step mfa
+                                    # Two-factor verification code challenged
                                     return await self.async_step_mfa()
                                 else:
+                                    _LOGGER.error("Auth helper response: %s", res_json)
                                     errors["base"] = "invalid_auth"
                             else:
                                 err_text = await resp.text()
@@ -119,22 +108,19 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except Exception as err:
                     _LOGGER.exception("Error calling auth server: %s", err)
                     errors["base"] = "unknown"
-            else:
-                errors["base"] = "missing_credentials"
 
         schema = vol.Schema(
             {
-                vol.Optional(CONF_USERNAME, default=""): str,
-                vol.Optional(CONF_PASSWORD, default=""): str,
-                vol.Optional(CONF_MFA_METHOD, default=DEFAULT_MFA_METHOD): vol.In(
+                vol.Required(CONF_USERNAME): str,
+                vol.Required(CONF_PASSWORD): str,
+                vol.Required(CONF_MFA_METHOD, default=DEFAULT_MFA_METHOD): vol.In(
                     [MFA_METHOD_SMS, MFA_METHOD_EMAIL]
                 ),
-                vol.Optional(CONF_COOKIE, default=""): str,
             }
         )
 
         return self.async_show_form(
-            step_id="user",
+            step_id="automated",
             data_schema=schema,
             errors=errors,
         )
@@ -142,7 +128,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_mfa(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        """Handle verification of MFA code."""
+        """Step 3: Verification of 6-digit OTP code."""
         errors: Dict[str, str] = {}
         auth_url = self.context.get("auth_url", DEFAULT_AUTH_SERVER_URL)
         username = self.context.get("username", "")
@@ -164,8 +150,11 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 res_json = await resp.json()
                                 if res_json.get("success") and res_json.get("cookies"):
                                     cookies = res_json["cookies"]
+                                    if username:
+                                        await self.async_set_unique_id(username.lower())
+                                        self._abort_if_unique_id_configured()
                                     return self.async_create_entry(
-                                        title=f"PSE&G ({username})",
+                                        title=f"PSE&G ({username})" if username else "PSE&G Energy",
                                         data={
                                             CONF_COOKIE: cookies,
                                             CONF_USERNAME: username,
@@ -188,6 +177,45 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="mfa",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    async def async_step_cookie(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Step 2b: Direct browser session cookie entry."""
+        errors: Dict[str, str] = {}
+
+        if user_input is not None:
+            cookie = user_input.get(CONF_COOKIE, "").strip()
+            if not cookie:
+                errors["base"] = "missing_credentials"
+            else:
+                try:
+                    client = PsegClient(cookie)
+                    await self.hass.async_add_executor_job(client.test_connection)
+                    return self.async_create_entry(
+                        title="PSE&G Energy",
+                        data={
+                            CONF_COOKIE: cookie,
+                        },
+                    )
+                except PsegAuthError as err:
+                    _LOGGER.error("Cookie validation error: %s", err)
+                    errors["base"] = "invalid_cookie"
+                except Exception as err:
+                    _LOGGER.exception("Unexpected error validating cookie: %s", err)
+                    errors["base"] = "unknown"
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_COOKIE): str,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="cookie",
             data_schema=schema,
             errors=errors,
         )

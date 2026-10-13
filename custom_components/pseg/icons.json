@@ -1,0 +1,21 @@
+{
+  "entity": {
+    "sensor": {
+      "electricity_consumption": {
+        "default": "mdi:lightning-bolt"
+      },
+      "electricity_cost": {
+        "default": "mdi:currency-usd"
+      },
+      "electricity_meter_id": {
+        "default": "mdi:meter-electric"
+      },
+      "electricity_latest_date": {
+        "default": "mdi:calendar-clock"
+      },
+      "outdoor_temperature": {
+        "default": "mdi:thermometer"
+      }
+    }
+  }
+}

@@ -19,17 +19,28 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up PSE&G integration wide configuration and register Lovelace resource."""
-    frontend_path = Path(__file__).parent / "frontend" / "pseg-energy-card.js"
+    """Set up PSE&G integration wide configuration and register Lovelace and brand resources."""
+    component_path = Path(__file__).parent
+    frontend_path = component_path / "frontend" / "pseg-energy-card.js"
+    icon_path = component_path / "icon.png"
+    logo_path = component_path / "logo.png"
+
+    static_paths = []
     if frontend_path.exists():
+        static_paths.append(("/pseg/pseg-energy-card.js", str(frontend_path)))
+    if icon_path.exists():
+        static_paths.append(("/pseg/icon.png", str(icon_path)))
+    if logo_path.exists():
+        static_paths.append(("/pseg/logo.png", str(logo_path)))
+
+    if static_paths:
         try:
             from homeassistant.components.http import StaticPathConfig
-            await hass.http.async_register_static_paths([
-                StaticPathConfig("/pseg/pseg-energy-card.js", str(frontend_path), False)
-            ])
-            _LOGGER.debug("Registered static path for PSEG custom card: /pseg/pseg-energy-card.js")
+            configs = [StaticPathConfig(url, path, False) for url, path in static_paths]
+            await hass.http.async_register_static_paths(configs)
+            _LOGGER.debug("Registered static paths for PSE&G resources")
         except Exception as err:
-            _LOGGER.debug("Could not register static path: %s", err)
+            _LOGGER.debug("Could not register static paths: %s", err)
 
     return True
 
