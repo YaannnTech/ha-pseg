@@ -23,7 +23,7 @@
       },
       "cookie": {
         "title": "Browser Session Cookie",
-        "description": "Authenticate directly using an active session cookie from your web browser.\n\n**How to get your cookie:**\n1. In your browser, log in to [mysmartenergy.nj.pseg.com](https://mysmartenergy.nj.pseg.com)\n2. Press **F12** (or right-click → **Inspect**) to open Developer Tools\n3. Click the **Network** tab, then refresh the page (F5)\n4. Click any request to mysmartenergy.nj.pseg.com (e.g. `Dashboard`)\n5. In **Request Headers**, copy the full value of the `Cookie:` header and paste it below.",
+        "description": "Authenticate directly using an active session cookie from your web browser.\n\n**How to get your cookie:**\n1. In your browser, log in to the PSE&G portal (mysmartenergy.nj.pseg.com)\n2. Press **F12** (or right-click → **Inspect**) to open Developer Tools\n3. Click the **Network** tab, then refresh the page (F5)\n4. Click any request to mysmartenergy.nj.pseg.com (e.g. `Dashboard`)\n5. In **Request Headers**, copy the full value of the `Cookie:` header and paste it below.",
         "data": {
           "cookie": "Session Cookie"
         }
