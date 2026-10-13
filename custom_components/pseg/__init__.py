@@ -3,21 +3,13 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .const import (
-    CONF_BROWSER_DIR,
-    CONF_MFA_METHOD,
-    CONF_PASSWORD,
-    CONF_USERNAME,
-    DEFAULT_MFA_METHOD,
-    DOMAIN,
-)
+from .const import CONF_COOKIE, DOMAIN
 from .coordinator import PsegDataUpdateCoordinator
 from .pseg_client import PsegClient
 
@@ -28,7 +20,6 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up PSE&G integration wide configuration and register Lovelace resource."""
-    # Register the bundled custom card static path
     frontend_path = Path(__file__).parent / "frontend" / "pseg-energy-card.js"
     if frontend_path.exists():
         hass.http.register_static_path(
@@ -45,20 +36,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PSE&G from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    browser_dir = entry.data.get(
-        CONF_BROWSER_DIR, hass.config.path("pseg", "browser_data")
-    )
+    cookie = entry.data.get(CONF_COOKIE, "")
+    client = PsegClient(cookie)
+    coordinator = PsegDataUpdateCoordinator(hass, client, dict(entry.data))
 
-    client = PsegClient(
-        username=entry.data[CONF_USERNAME],
-        password=entry.data[CONF_PASSWORD],
-        browser_dir=browser_dir,
-        mfa_method=entry.data.get(CONF_MFA_METHOD, DEFAULT_MFA_METHOD),
-    )
-
-    coordinator = PsegDataUpdateCoordinator(hass, client)
-
-    # Perform initial refresh to populate sensors
+    # Initial data refresh
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = coordinator

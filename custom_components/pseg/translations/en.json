@@ -3,23 +3,27 @@
     "step": {
       "user": {
         "title": "PSE&G Account Sign-In",
-        "description": "Enter your PSE&G online account credentials. If your account requires Multi-Factor Authentication (MFA), select your preferred delivery method below.",
+        "description": "Enter your PSE&G online credentials to authenticate via the local login service, or paste your session cookie directly for instant setup.",
         "data": {
-          "username": "Username / User ID",
-          "password": "Password",
-          "mfa_method": "MFA Delivery Method"
+          "username": "Username / User ID (Optional if cookie provided)",
+          "password": "Password (Optional if cookie provided)",
+          "mfa_method": "MFA Delivery Method",
+          "cookie": "Session Cookie (Optional for instant setup)"
         }
       },
       "mfa": {
         "title": "Two-Factor Verification",
-        "description": "A 6-digit verification code was sent via {method} to your registered phone number or email address. Enter the code below to complete setup.",
+        "description": "A 6-digit verification code was sent to your registered phone or email. Enter the code below to complete setup.",
         "data": {
           "mfa_code": "6-Digit Security Code"
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid username or password. Please verify your credentials.",
+      "missing_credentials": "Enter your Username and Password, or provide a session cookie.",
+      "invalid_auth": "Authentication failed. Please verify your credentials or check the helper log.",
+      "invalid_cookie": "The session cookie provided was rejected or expired.",
+      "auth_server_unavailable": "Could not connect to the local automated login service on port 8000. You can also paste your session cookie directly.",
       "invalid_code": "The verification code entered is invalid or expired.",
       "unknown": "An unexpected error occurred while communicating with PSE&G."
     },

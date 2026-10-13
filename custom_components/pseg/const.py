@@ -4,12 +4,14 @@ DOMAIN = "pseg"
 
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
+CONF_COOKIE = "cookie"
 CONF_MFA_METHOD = "mfa_method"
 CONF_MFA_CODE = "mfa_code"
-CONF_BROWSER_DIR = "browser_dir"
+CONF_AUTH_SERVER_URL = "auth_server_url"
 
 DEFAULT_MFA_METHOD = "sms"
 DEFAULT_SCAN_INTERVAL_HOURS = 4
+DEFAULT_AUTH_SERVER_URL = "http://127.0.0.1:8000"
 
 MFA_METHOD_SMS = "sms"
 MFA_METHOD_EMAIL = "email"
