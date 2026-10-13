@@ -1,108 +1,80 @@
 # PSE&G Energy (New Jersey) for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/default)
-[![GitHub Release](https://img.shields.io/github/v/release/sidprax/ha-pseg)](https://github.com/sidprax/ha-pseg/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Home Assistant custom integration for **Public Service Electric and Gas (PSE&G)** customers in New Jersey. Automatically retrieves your daily electric meter readings, costs, and historical energy trends directly from the PSE&G MySmartEnergy portal (MyMeter platform).
+Home Assistant integration for Public Service Electric and Gas (PSE&G) customers in New Jersey. Retrieves daily electric meter readings, costs, and historical energy trends directly from the PSE&G MySmartEnergy portal (MyMeter).
 
-Includes an ultra-compact, custom **PSEG Energy Card** with interactive 7-day vs 14-day toggles, energy/cost switching, and seamless Home Assistant Energy Dashboard compatibility.
+Includes a built-in Lovelace card with 7-day and 14-day history views and kWh / cost switching.
 
----
+![PSEG Energy Card](docs/card.png)
 
-## ✨ Features
+## Features
 
-- 🔐 **Multi-Step Guided Setup**:
-  - **Automated Sign-In (Recommended)**: Enter your PSE&G online credentials; if challenged by Okta, enter your 6-digit SMS or Email verification code in the modal.
-  - **Browser Session Cookie**: Direct cookie authentication for users who prefer manual token provisioning.
-- ⚡ **Accurate Daily Readings**: Fetches official smart meter readings (`sensor.pseg_electricity_consumption`) matching the portal down to the decimal point.
-- 💵 **Cost Tracking**: Captures daily electric costs (`sensor.pseg_electricity_cost`) in USD.
-- 🌡️ **Weather Integration**: Automatically extracts outdoor temperature ranges (`sensor.pseg_outdoor_temperature`) recorded alongside meter readings.
-- 📊 **14-Day History Attributes**: Provides 14-day energy & cost history within entity state attributes for high-speed local charting.
-- 🎨 **Built-In Ultra-Minimal Card**: Includes the `pseg-energy-card` which automatically registers in the Lovelace card picker (`Add Card` -> `PSEG Energy Card`).
+- **Daily Smart Meter Readings**: Captures daily electricity usage (`sensor.pseg_electricity_consumption`).
+- **Cost Tracking**: Tracks daily electricity costs in USD (`sensor.pseg_electricity_cost`).
+- **Dynamic Rate Calculation**: Automatically calculates your effective electric rate from actual bill data.
+- **Outdoor Temperature**: Records daily low, average, and high temperatures reported alongside meter readings (`sensor.pseg_outdoor_temperature`).
+- **14-Day History**: Provides 14 days of interval usage and cost data in entity state attributes for local charting.
+- **Manual Refresh**: Includes a refresh button (`button.pseg_refresh_data`) to trigger an immediate data fetch.
+- **Built-in Lovelace Card**: Bundles `pseg-energy-card` ready to add from the card picker.
 
----
+## Installation
 
-## 📦 Installation via HACS
+### Via HACS (Recommended)
 
-1. Open **Home Assistant** and navigate to **HACS** > **Integrations**.
-2. Click the three dots (top right) and select **Custom repositories**.
-3. Paste the repository URL:
+1. In Home Assistant, open **HACS** > **Integrations**.
+2. Click the three dots in the top right and select **Custom repositories**.
+3. Add the repository:
    ```text
    https://github.com/sidprax/ha-pseg
    ```
-4. Set the Category to **Integration** and click **Add**.
+4. Set category to **Integration** and click **Add**.
 5. Find **PSE&G Energy (New Jersey)**, click **Download**, and restart Home Assistant.
 
----
+### Manual Installation
 
-## ⚙️ Configuration (Guided UI)
+1. Copy the `custom_components/pseg` directory to your Home Assistant `config/custom_components/` folder.
+2. Restart Home Assistant.
 
-1. Go to **Settings** > **Devices & Services** > **Add Integration**.
+## Configuration
+
+1. In Home Assistant, go to **Settings** > **Devices & Services** > **Add Integration**.
 2. Search for **PSE&G Energy (New Jersey)**.
-3. Select your preferred setup method:
-   - **Automated Sign-In**: Enter Username, Password, and MFA delivery method (SMS or Email). If Okta requests 2FA, enter the 6-digit code when prompted.
-   - **Browser Session Cookie**: Paste your active session cookie from `mysmartenergy.nj.pseg.com`.
-4. Click **Submit**. Your smart meter sensors and 14-day history are ready!
+3. Choose your sign-in method:
+   - **Automated Sign-In**: Enter your PSE&G portal username and password, then select your MFA delivery method (SMS or Email). When prompted, enter the 6-digit verification code.
+   - **Session Cookie**: Alternatively, provide an active session cookie copied from `mysmartenergy.nj.pseg.com`.
+4. Click **Submit**.
 
----
+## Lovelace Card
 
-## 📊 Custom Lovelace Card
-
-The integration bundles `pseg-energy-card.js`. It automatically registers in your Lovelace card picker.
-
-### Basic Card Configuration (Zero-Config)
-
-For most users, simply specify the entity. The card automatically derives your electric rate from actual meter readings and opens the standard Home Assistant entity dialog on tap:
+The integration registers `pseg-energy-card` automatically. Add it to any dashboard:
 
 ```yaml
 type: custom:pseg-energy-card
 entity: sensor.pseg_electricity_consumption
-```
-
-### Advanced Card Configuration (Custom Popups & Baselines)
-
-```yaml
-type: custom:pseg-energy-card
-entity: sensor.pseg_electricity_consumption
-cost_per_kwh: 0.22                 # Optional: Override auto-calculated rate ($/kWh)
-cycle_days: 30                     # Optional: Billing cycle length in days (default: 30)
-last_cycle_kwh: 168.0              # Optional: Compare projection against prior bill total
-show_next_update: true             # Optional: Render next scheduled pull time beside meter label
-popup_hash: "#pseg_energy_popup"   # Optional: Navigate to custom Bubble Card / browser popup (defaults to native HA more-info)
 ```
 
 ### Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `entity` | string | `sensor.pseg_electricity_consumption` | Primary entity providing daily kWh and `history_14d` |
-| `cost_per_kwh` | number | *Auto-calculated* | Optional manual rate override ($/kWh). If omitted, automatically derived from actual meter readings. |
-| `cycle_days` | number | `30` | Billing cycle duration in days for monthly usage projections |
-| `last_cycle_kwh` | number | *None* | Optional previous cycle total (kWh) to display a ±% comparison badge |
-| `toggle_entity` | string | `input_boolean.pseg_display_dollars` | Optional toggle helper for kWh vs $ switching |
-| `range_toggle_entity` | string | `input_boolean.pseg_chart_14d` | Optional toggle helper for 7d vs 14d chart switching |
-| `next_update_entity` | string | `sensor.pseg_next_update` | Entity providing next scheduled data pull timestamp |
-| `show_next_update` | boolean | `false` | When true, renders next pull time beside meter label |
-| `popup_hash` | string | *None* | Optional popup hash (e.g. `#pseg_energy_popup`). If omitted, opens native Home Assistant more-info modal. |
+| `entity` | string | `sensor.pseg_electricity_consumption` | Primary consumption entity |
+| `toggle_entity` | string | `input_boolean.pseg_display_dollars` | Optional helper entity to switch between kWh and dollar view |
+| `range_toggle_entity` | string | `input_boolean.pseg_chart_14d` | Optional helper entity to switch between 7-day and 14-day chart view |
+| `show_next_update` | boolean | `false` | Display the next scheduled fetch timestamp beside the meter label |
+| `popup_hash` | string | `null` | URL hash to open a custom popup card on tap. When omitted, tapping opens the standard entity dialog. |
 
----
+## Entities Provided
 
-## 🛠️ Requirements & Host Dependencies
+- `sensor.pseg_electricity_consumption`: Latest daily electric usage in kWh (contains `history_14d` and daily stats)
+- `sensor.pseg_electricity_cost`: Latest daily cost in USD
+- `sensor.pseg_meter_id`: Meter serial number and service classification
+- `sensor.pseg_latest_reading_date`: Date of the most recent recorded reading
+- `sensor.pseg_outdoor_temperature`: Recorded low, average, and high temperatures
+- `sensor.pseg_next_update`: Timestamp of the next scheduled polling attempt
+- `button.pseg_refresh_data`: Button to trigger an immediate portal sync
 
-To support automated session refreshes through PSE&G's Okta identity engine without storing browser binaries in the integration package, ensure the host system has standard Chromium installed:
+## License
 
-- **Alpine Linux / Home Assistant Terminal**:
-  ```bash
-  apk add chromium chromium-chromedriver ffmpeg
-  ```
-- **Debian / Ubuntu**:
-  ```bash
-  apt-get install chromium-browser chromium-chromedriver ffmpeg
-  ```
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT
