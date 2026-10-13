@@ -28,6 +28,8 @@ class PsegEnergyCard extends HTMLElement {
       last_cycle_kwh: 168.0,
       toggle_entity: "input_boolean.pseg_display_dollars",
       range_toggle_entity: "input_boolean.pseg_chart_14d",
+      next_update_entity: "sensor.pseg_next_update",
+      show_next_update: false,
       popup_hash: "#pseg_energy_popup"
     };
   }
@@ -47,6 +49,8 @@ class PsegEnergyCard extends HTMLElement {
       last_cycle_kwh: 168.0,
       toggle_entity: "input_boolean.pseg_display_dollars",
       range_toggle_entity: "input_boolean.pseg_chart_14d",
+      next_update_entity: "sensor.pseg_next_update",
+      show_next_update: false,
       popup_hash: "#pseg_energy_popup",
       ...config
     };
@@ -202,6 +206,28 @@ class PsegEnergyCard extends HTMLElement {
     const lParts = latestRawDate.split("-");
     if (lParts.length === 3) {
       asOfDateStr = `${lParts[1]}/${lParts[2]}`;
+    }
+
+    // Format Next Update timestamp
+    let nextUpdateInline = "";
+    let nextUpdateTooltip = "";
+    const nextUpdateEntId = this.config.next_update_entity || "sensor.pseg_next_update";
+    const nextEnt = this._hass.states[nextUpdateEntId];
+    const nextVal = (nextEnt && nextEnt.state) ? nextEnt.state : (entity.attributes.next_update || "");
+    if (nextVal && nextVal !== "unknown" && nextVal !== "unavailable") {
+      try {
+        const nextDt = new Date(nextVal);
+        if (!isNaN(nextDt.getTime())) {
+          const now = new Date();
+          const isToday = nextDt.getDate() === now.getDate() && nextDt.getMonth() === now.getMonth() && nextDt.getFullYear() === now.getFullYear();
+          const timeStr = nextDt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+          const fullStr = isToday ? timeStr : `${nextDt.getMonth() + 1}/${nextDt.getDate()} ${timeStr}`;
+          nextUpdateTooltip = `Next pull: ${fullStr}`;
+          if (this.config.show_next_update) {
+            nextUpdateInline = ` • ↻ ${fullStr}`;
+          }
+        }
+      } catch (e) {}
     }
 
     // Calculate Average over valid points
@@ -475,8 +501,8 @@ class PsegEnergyCard extends HTMLElement {
         <!-- Row 1: Left Meta + Right Single-Line Mini Stats -->
         <div class="top-row">
           <div class="meta-col">
-            <span class="meta-date">As of ${asOfDateStr}</span>
-            <span class="meta-meter">${meterText}</span>
+            <span class="meta-date" title="${nextUpdateTooltip || `As of ${asOfDateStr}`}">As of ${asOfDateStr}</span>
+            <span class="meta-meter">${meterText}${nextUpdateInline}</span>
           </div>
 
           <div class="metrics-inline">

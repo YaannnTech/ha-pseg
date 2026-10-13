@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 from typing import Any, Dict, Optional
 
@@ -44,30 +45,32 @@ async def async_setup_entry(
     """Set up PSE&G sensor entries."""
     coordinator: PsegDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Migrate legacy entity unique IDs and entity IDs from 'yesterday' naming
+    # Automated migration for entity unique IDs and entity IDs from legacy naming
     try:
         ent_reg = er.async_get(hass)
         migrations = [
-            ("electricity_yesterday", "electricity_consumption"),
-            ("electricity_cost_yesterday", "electricity_cost"),
-            ("outdoor_temperature_yesterday", "outdoor_temperature"),
+            ("electricity_yesterday", "electricity_consumption", "sensor.pseg_electricity_consumption"),
+            ("electricity_cost_yesterday", "electricity_cost", "sensor.pseg_electricity_cost"),
+            ("outdoor_temperature_yesterday", "outdoor_temperature", "sensor.pseg_outdoor_temperature"),
+            ("electricity_meter_id", "meter_id", "sensor.pseg_meter_id"),
+            ("electricity_latest_date", "latest_reading_date", "sensor.pseg_latest_reading_date"),
         ]
-        for old_suffix, new_suffix in migrations:
+        for old_suffix, new_suffix, target_entity_id in migrations:
             old_uid = f"{entry.entry_id}_{old_suffix}"
             new_uid = f"{entry.entry_id}_{new_suffix}"
             old_ent_id = ent_reg.async_get_entity_id("sensor", DOMAIN, old_uid)
             if old_ent_id:
                 _LOGGER.info(
-                    "Migrating entity %s (UID: %s) -> (UID: %s, Entity ID: sensor.pseg_%s)",
+                    "Migrating entity %s (UID: %s) -> (UID: %s, Entity ID: %s)",
                     old_ent_id,
                     old_uid,
                     new_uid,
-                    new_suffix,
+                    target_entity_id,
                 )
                 ent_reg.async_update_entity(
                     old_ent_id,
                     new_unique_id=new_uid,
-                    new_entity_id=f"sensor.pseg_{new_suffix}",
+                    new_entity_id=target_entity_id,
                 )
     except Exception as err:
         _LOGGER.warning("Could not run entity registry migration: %s", err)
@@ -78,6 +81,7 @@ async def async_setup_entry(
         PsegElectricityMeterSensor(coordinator, entry),
         PsegElectricityLatestDateSensor(coordinator, entry),
         PsegTemperatureSensor(coordinator, entry),
+        PsegNextUpdateSensor(coordinator, entry),
     ]
 
     async_add_entities(entities)
@@ -143,6 +147,7 @@ class PsegElectricityConsumptionSensor(PsegBaseSensor):
             ATTR_HISTORY_14D: data.get("history_14d", []),
             "last_updated": data.get("last_updated"),
             "temperature_range": data.get("temperature_range"),
+            "next_update": data.get("next_update"),
         }
 
 
@@ -168,11 +173,11 @@ class PsegElectricityCostSensor(PsegBaseSensor):
 class PsegElectricityMeterSensor(PsegBaseSensor):
     """Sensor for the meter ID/description."""
 
-    _attr_name = "Electricity Meter ID"
+    _attr_name = "Meter ID"
     _attr_icon = "mdi:meter-electric"
 
     def __init__(self, coordinator: PsegDataUpdateCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry, "electricity_meter_id")
+        super().__init__(coordinator, entry, "meter_id")
 
     @property
     def native_value(self) -> Optional[str]:
@@ -184,11 +189,11 @@ class PsegElectricityMeterSensor(PsegBaseSensor):
 class PsegElectricityLatestDateSensor(PsegBaseSensor):
     """Sensor for the latest reading date."""
 
-    _attr_name = "Electricity Latest Date"
+    _attr_name = "Latest Reading Date"
     _attr_icon = "mdi:calendar-clock"
 
     def __init__(self, coordinator: PsegDataUpdateCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry, "electricity_latest_date")
+        super().__init__(coordinator, entry, "latest_reading_date")
 
     @property
     def native_value(self) -> Optional[str]:
@@ -213,3 +218,19 @@ class PsegTemperatureSensor(PsegBaseSensor):
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("temperature_avg")
+
+
+class PsegNextUpdateSensor(PsegBaseSensor):
+    """Sensor for the next scheduled data update timestamp."""
+
+    _attr_name = "Next Update"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:clock-outline"
+
+    def __init__(self, coordinator: PsegDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry, "next_update")
+
+    @property
+    def native_value(self) -> Optional[datetime]:
+        """Return the next scheduled update time as a timezone-aware datetime."""
+        return self.coordinator.next_update_time

@@ -72,6 +72,8 @@ popup_hash: "#pseg_energy_popup"
 | `last_cycle_kwh` | number | `168.0` | Previous cycle total for projection comparison |
 | `toggle_entity` | string | `input_boolean.pseg_display_dollars` | Toggle entity for kWh vs $ display |
 | `range_toggle_entity` | string | `input_boolean.pseg_chart_14d` | Toggle entity for 7d vs 14d chart range |
+| `next_update_entity` | string | `sensor.pseg_next_update` | Entity providing next scheduled data pull timestamp |
+| `show_next_update` | boolean | `false` | When true, renders next pull time beside meter label |
 | `popup_hash` | string | `#pseg_energy_popup` | Hash for popup navigation on card tap |
 
 ---

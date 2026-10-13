@@ -7,14 +7,22 @@
       "electricity_cost": {
         "default": "mdi:currency-usd"
       },
-      "electricity_meter_id": {
+      "meter_id": {
         "default": "mdi:meter-electric"
       },
-      "electricity_latest_date": {
+      "latest_reading_date": {
         "default": "mdi:calendar-clock"
       },
       "outdoor_temperature": {
         "default": "mdi:thermometer"
+      },
+      "next_update": {
+        "default": "mdi:clock-outline"
+      }
+    },
+    "button": {
+      "refresh_data": {
+        "default": "mdi:refresh"
       }
     }
   }

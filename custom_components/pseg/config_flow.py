@@ -62,52 +62,62 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not username or not password:
                 errors["base"] = "missing_credentials"
             else:
-                self.context["username"] = username
-                self.context["password"] = password
-                self.context["auth_url"] = auth_url
+                candidate_urls = [auth_url]
+                for fallback in ["http://10.0.2.52:8000", "http://127.0.0.1:8000"]:
+                    if fallback not in candidate_urls:
+                        candidate_urls.append(fallback)
 
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(
-                            f"{auth_url}/login",
-                            json={
-                                "username": username,
-                                "password": password,
-                                "mfa_method": mfa_method,
-                            },
-                            timeout=aiohttp.ClientTimeout(total=90),
-                        ) as resp:
-                            if resp.status == 200:
-                                res_json = await resp.json()
-                                if res_json.get("success") and res_json.get("cookies"):
-                                    # Authenticated directly without MFA challenge
-                                    cookies = res_json["cookies"]
-                                    await self.async_set_unique_id(username.lower())
-                                    self._abort_if_unique_id_configured()
-                                    return self.async_create_entry(
-                                        title=f"PSE&G ({username})",
-                                        data={
-                                            CONF_COOKIE: cookies,
-                                            CONF_USERNAME: username,
-                                            CONF_PASSWORD: password,
-                                        },
-                                    )
-                                elif res_json.get("mfa_required"):
-                                    # Two-factor verification code challenged
-                                    return await self.async_step_mfa()
+                connected = False
+                for target_url in candidate_urls:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(
+                                f"{target_url}/login",
+                                json={
+                                    "username": username,
+                                    "password": password,
+                                    "mfa_method": mfa_method,
+                                },
+                                timeout=aiohttp.ClientTimeout(total=90),
+                            ) as resp:
+                                connected = True
+                                self.context["auth_url"] = target_url
+                                if resp.status == 200:
+                                    res_json = await resp.json()
+                                    if res_json.get("success") and res_json.get("cookies"):
+                                        cookies = res_json["cookies"]
+                                        await self.async_set_unique_id(username.lower())
+                                        self._abort_if_unique_id_configured()
+                                        return self.async_create_entry(
+                                            title=f"PSE&G ({username})",
+                                            data={
+                                                CONF_COOKIE: cookies,
+                                                CONF_USERNAME: username,
+                                                CONF_PASSWORD: password,
+                                                CONF_AUTH_SERVER_URL: target_url,
+                                            },
+                                        )
+                                    elif res_json.get("mfa_required"):
+                                        return await self.async_step_mfa()
+                                    else:
+                                        _LOGGER.error("Auth helper response: %s", res_json)
+                                        errors["base"] = "invalid_auth"
+                                        break
                                 else:
-                                    _LOGGER.error("Auth helper response: %s", res_json)
+                                    err_text = await resp.text()
+                                    _LOGGER.error("Auth helper returned status %s: %s", resp.status, err_text)
                                     errors["base"] = "invalid_auth"
-                            else:
-                                err_text = await resp.text()
-                                _LOGGER.error("Auth helper returned status %s: %s", resp.status, err_text)
-                                errors["base"] = "invalid_auth"
-                except aiohttp.ClientConnectorError:
-                    _LOGGER.error("Could not reach auth server at %s", auth_url)
+                                    break
+                    except aiohttp.ClientConnectorError:
+                        _LOGGER.debug("Could not reach auth server at %s", target_url)
+                        continue
+                    except Exception as err:
+                        _LOGGER.exception("Error calling auth server at %s: %s", target_url, err)
+                        errors["base"] = "unknown"
+                        break
+
+                if not connected and not errors:
                     errors["base"] = "auth_server_unavailable"
-                except Exception as err:
-                    _LOGGER.exception("Error calling auth server: %s", err)
-                    errors["base"] = "unknown"
 
         schema = vol.Schema(
             {
