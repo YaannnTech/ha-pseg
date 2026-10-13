@@ -1,0 +1,26 @@
+"""Constants for the PSE&G Energy integration."""
+
+DOMAIN = "pseg"
+
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"
+CONF_MFA_METHOD = "mfa_method"
+CONF_MFA_CODE = "mfa_code"
+CONF_BROWSER_DIR = "browser_dir"
+
+DEFAULT_MFA_METHOD = "sms"
+DEFAULT_SCAN_INTERVAL_HOURS = 4
+
+MFA_METHOD_SMS = "sms"
+MFA_METHOD_EMAIL = "email"
+
+ATTR_METER = "meter"
+ATTR_LATEST_DATE = "latest_date"
+ATTR_PREVIOUS_DATE = "previous_date"
+ATTR_PREVIOUS_KWH = "previous_kwh"
+ATTR_PREVIOUS_COST = "previous_cost"
+ATTR_LATEST_COST = "latest_cost"
+ATTR_HISTORY_14D = "history_14d"
+ATTR_TEMPERATURE_HIGH = "temperature_high"
+ATTR_TEMPERATURE_LOW = "temperature_low"
+ATTR_TEMPERATURE_AVG = "temperature_avg"

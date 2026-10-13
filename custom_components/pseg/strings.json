@@ -1,0 +1,30 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PSE&G Account Sign-In",
+        "description": "Enter your PSE&G online account credentials. If your account requires Multi-Factor Authentication (MFA), select your preferred delivery method below.",
+        "data": {
+          "username": "Username / User ID",
+          "password": "Password",
+          "mfa_method": "MFA Delivery Method"
+        }
+      },
+      "mfa": {
+        "title": "Two-Factor Verification",
+        "description": "A 6-digit verification code was sent via {method} to your registered phone number or email address. Enter the code below to complete setup.",
+        "data": {
+          "mfa_code": "6-Digit Security Code"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password. Please verify your credentials.",
+      "invalid_code": "The verification code entered is invalid or expired.",
+      "unknown": "An unexpected error occurred while communicating with PSE&G."
+    },
+    "abort": {
+      "already_configured": "This PSE&G account is already configured."
+    }
+  }
+}
