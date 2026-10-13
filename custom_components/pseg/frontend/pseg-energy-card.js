@@ -129,7 +129,11 @@ class PsegEnergyCard extends HTMLElement {
   render() {
     if (!this.shadowRoot || !this._hass || !this.config) return;
 
-    const entity = this._hass.states[this.config.entity];
+    let entity = this._hass.states[this.config.entity];
+    if (!entity) {
+      entity = this._hass.states["sensor.pseg_electricity_yesterday"] || 
+               this._hass.states["sensor.pseg_smart_energy_meter_electricity_yesterday"];
+    }
     if (!entity) {
       this.shadowRoot.innerHTML = `
         <ha-card style="background: rgba(25, 25, 25, 0.4); backdrop-filter: blur(10px); padding: 12px; border-radius: 18px; color: #ff6b6b; border: 1px solid rgba(255,255,255,0.08);">

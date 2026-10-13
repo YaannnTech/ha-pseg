@@ -69,10 +69,11 @@ class PsegBaseSensor(CoordinatorEntity[PsegDataUpdateCoordinator], SensorEntity)
         self._attr_unique_id = f"{entry.entry_id}_{key}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name="PSE&G Smart Energy Meter",
+            name="PSE&G",
             manufacturer="PSE&G",
             model="MyMeter AMI",
         )
+        self.entity_id = f"sensor.pseg_{key}"
 
 
 class PsegElectricityYesterdaySensor(PsegBaseSensor):
