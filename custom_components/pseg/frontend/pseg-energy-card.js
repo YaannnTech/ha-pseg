@@ -60,6 +60,12 @@ class PsegEnergyCard extends HTMLElement {
     }
   }
 
+  connectedCallback() {
+    if (this._hass && this.config) {
+      this.render();
+    }
+  }
+
   getCardSize() {
     return 2;
   }
@@ -124,20 +130,71 @@ class PsegEnergyCard extends HTMLElement {
   render() {
     if (!this.shadowRoot || !this._hass || !this.config) return;
 
-    let entity = this._hass.states[this.config.entity];
-    if (!entity) {
-      entity = this._hass.states["sensor.pseg_electricity_consumption"] ||
-               this._hass.states["sensor.pseg_electricity_yesterday"] || 
-               this._hass.states["sensor.pseg_smart_energy_meter_electricity_yesterday"];
-    }
-    if (!entity) {
-      this.shadowRoot.innerHTML = `
-        <ha-card style="background: rgba(25, 25, 25, 0.4); backdrop-filter: blur(10px); padding: 12px; border-radius: 18px; color: #ff6b6b; border: 1px solid rgba(255,255,255,0.08);">
-          Entity not found: ${this.config.entity}
-        </ha-card>
-      `;
-      return;
-    }
+    try {
+      let entity = this._hass.states[this.config.entity];
+      if (!entity) {
+        entity = this._hass.states["sensor.pseg_electricity_consumption"] ||
+                 this._hass.states["sensor.pseg_electricity_yesterday"] || 
+                 this._hass.states["sensor.pseg_smart_energy_meter_electricity_yesterday"];
+      }
+      if (!entity) {
+        this.shadowRoot.innerHTML = `
+          <ha-card style="background: rgba(25, 25, 25, 0.4); backdrop-filter: blur(10px); padding: 14px 18px; border-radius: 18px; color: #ff6b6b; border: 1px solid rgba(255,255,255,0.08); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Roboto, sans-serif; font-size: 13px;">
+            PSE&amp;G Entity not found: <code>${this.config.entity}</code>
+          </ha-card>
+        `;
+        return;
+      }
+
+      if (entity.state === "unavailable" || entity.state === "unknown") {
+        this.shadowRoot.innerHTML = `
+          <style>
+            ha-card {
+              background: rgba(25, 25, 25, 0.45);
+              backdrop-filter: blur(12px);
+              -webkit-backdrop-filter: blur(12px);
+              border-radius: 18px;
+              border: 1px solid rgba(255, 255, 255, 0.08);
+              padding: 16px 20px;
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              color: rgba(255, 255, 255, 0.7);
+              font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+              font-size: 13px;
+            }
+            .status-dot {
+              width: 8px;
+              height: 8px;
+              border-radius: 50%;
+              background: #f59e0b;
+              display: inline-block;
+              margin-right: 10px;
+              box-shadow: 0 0 8px #f59e0b;
+            }
+            .status-title {
+              color: #ffffff;
+              font-weight: 600;
+            }
+            .status-sub {
+              font-size: 11px;
+              color: rgba(255, 255, 255, 0.45);
+              margin-top: 2px;
+            }
+          </style>
+          <ha-card id="cardWrapper">
+            <div style="display: flex; align-items: center;">
+              <span class="status-dot"></span>
+              <div>
+                <div class="status-title">PSE&amp;G Energy</div>
+                <div class="status-sub">Updating meter data &bull; Waiting for sync...</div>
+              </div>
+            </div>
+            <span style="font-size: 11px; color: rgba(255,255,255,0.4);">Connecting</span>
+          </ha-card>
+        `;
+        return;
+      }
 
     const toggleEnt = this.config.toggle_entity || "input_boolean.pseg_display_dollars";
     const isDollars = this._hass.states[toggleEnt]?.state === "on";
@@ -565,14 +622,26 @@ class PsegEnergyCard extends HTMLElement {
     this.shadowRoot.getElementById("cardWrapper")?.addEventListener("click", () => {
       this.openPopup();
     });
+    } catch (err) {
+      console.error("PSEG Energy Card render error:", err);
+      this.shadowRoot.innerHTML = `
+        <ha-card style="background: rgba(25, 25, 25, 0.4); backdrop-filter: blur(10px); padding: 14px 18px; border-radius: 18px; color: #ff6b6b; border: 1px solid rgba(255,255,255,0.08); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Roboto, sans-serif; font-size: 13px;">
+          PSE&amp;G Card Error: ${err.message || err}
+        </ha-card>
+      `;
+    }
   }
 }
 
-customElements.define("pseg-energy-card", PsegEnergyCard);
+if (!customElements.get("pseg-energy-card")) {
+  customElements.define("pseg-energy-card", PsegEnergyCard);
+}
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "pseg-energy-card",
-  name: "PSEG Energy Card (Ultra-Minimal)",
-  preview: true,
-  description: "Ultra-compact minimal Galleria energy card with smooth green-amber bars and single-line metrics."
-});
+if (!window.customCards.some(c => c.type === "pseg-energy-card")) {
+  window.customCards.push({
+    type: "pseg-energy-card",
+    name: "PSEG Energy Card (Ultra-Minimal)",
+    preview: true,
+    description: "Ultra-compact minimal Galleria energy card with smooth green-amber bars and single-line metrics."
+  });
+}

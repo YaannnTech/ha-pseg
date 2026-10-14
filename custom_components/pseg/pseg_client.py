@@ -120,7 +120,15 @@ class PsegClient:
 
     def _parse_chart_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Parse series into clean sensor model."""
-        series_list = data.get("Data", {}).get("series", [])
+        chart_data = data.get("Data")
+        if not chart_data or not isinstance(chart_data, dict):
+            ajax_results = data.get("AjaxResults") or []
+            for ar in ajax_results:
+                if isinstance(ar, dict) and ar.get("Action") == "Redirect":
+                    raise PsegAuthError(f"Session expired: MyMeter requested redirect to {ar.get('Value')}")
+            raise PsegAuthError("No chart data returned from MyMeter. Session may have expired.")
+
+        series_list = chart_data.get("series", [])
         if not series_list:
             raise PsegAuthError("No series data returned from MyMeter. Session may have expired.")
 

@@ -55,7 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     cookie = entry.data.get(CONF_COOKIE, "")
     client = PsegClient(cookie)
-    coordinator = PsegDataUpdateCoordinator(hass, client, dict(entry.data))
+    coordinator = PsegDataUpdateCoordinator(hass, client, dict(entry.data), config_entry=entry)
 
     # Initial data refresh
     await coordinator.async_config_entry_first_refresh()

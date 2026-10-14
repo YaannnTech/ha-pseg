@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -34,10 +35,12 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         hass: HomeAssistant,
         client: PsegClient,
         entry_data: Dict[str, Any],
+        config_entry: Optional[ConfigEntry] = None,
     ) -> None:
         """Initialize the coordinator."""
         self.client = client
         self.entry_data = entry_data
+        self.config_entry = config_entry
         self.next_update_time: Optional[datetime] = None
         super().__init__(
             hass,
@@ -81,6 +84,13 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     if res_json.get("success") and res_json.get("cookies"):
                                         new_cookies = res_json["cookies"]
                                         self.client.update_cookie(new_cookies)
+                                        self.entry_data[CONF_COOKIE] = new_cookies
+                                        if self.config_entry:
+                                            self.hass.config_entries.async_update_entry(
+                                                self.config_entry,
+                                                data={**self.config_entry.data, CONF_COOKIE: new_cookies},
+                                            )
+                                        _LOGGER.info("Silent re-authentication successful via %s", auth_url)
                                         data = await self.hass.async_add_executor_job(
                                             self.client.fetch_energy_data, 14
                                         )
