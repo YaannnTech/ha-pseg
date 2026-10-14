@@ -14,6 +14,15 @@
           "mfa_method": "Two-Factor Method (SMS or Email)"
         }
       },
+      "reauth_confirm": {
+        "title": "Re-authenticate PSE&G",
+        "description": "Your PSE&G session has expired. Please verify your credentials and MFA method to re-authenticate account {username}.",
+        "data": {
+          "username": "Username or Email",
+          "password": "Password",
+          "mfa_method": "Two-Factor Method (SMS or Email)"
+        }
+      },
       "mfa": {
         "title": "Two-Factor Verification",
         "description": "A 6-digit verification code has been sent to your selected phone or email. Enter the code below to complete setup.",
@@ -38,7 +47,14 @@
       "unknown": "An unexpected error occurred while communicating with PSE&G."
     },
     "abort": {
-      "already_configured": "This PSE&G account is already configured."
+      "already_configured": "This PSE&G account is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "issues": {
+    "reauth_required": {
+      "title": "PSE&G Authentication Required",
+      "description": "Your PSE&G session has expired and requires two-factor verification. Please re-authenticate your account under Settings > Devices & Services."
     }
   }
 }

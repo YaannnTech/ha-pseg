@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 from typing import Any, Dict, Optional
 
@@ -37,6 +38,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the flow."""
         self._user_input: Dict[str, Any] = {}
+        self._reauth_entry: Optional[config_entries.ConfigEntry] = None
 
     async def async_step_user(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -45,6 +47,106 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_menu(
             step_id="user",
             menu_options=["automated", "cookie"],
+        )
+
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> FlowResult:
+        """Handle reauthorization request from Home Assistant."""
+        self._reauth_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Confirm reauth credentials and trigger sign-in."""
+        errors: Dict[str, str] = {}
+        existing_data = self._reauth_entry.data if self._reauth_entry else {}
+        default_username = existing_data.get(CONF_USERNAME, "")
+        default_mfa = existing_data.get(CONF_MFA_METHOD, DEFAULT_MFA_METHOD)
+
+        if user_input is not None:
+            username = user_input.get(CONF_USERNAME, default_username).strip()
+            password = user_input.get(CONF_PASSWORD, "").strip()
+            mfa_method = user_input.get(CONF_MFA_METHOD, default_mfa)
+            auth_url = existing_data.get(CONF_AUTH_SERVER_URL, DEFAULT_AUTH_SERVER_URL)
+
+            if not username or not password:
+                errors["base"] = "missing_credentials"
+            else:
+                candidate_urls = [auth_url]
+                for fallback in ["http://10.0.2.52:8000", "http://127.0.0.1:8000"]:
+                    if fallback not in candidate_urls:
+                        candidate_urls.append(fallback)
+
+                connected = False
+                for target_url in candidate_urls:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(
+                                f"{target_url}/login",
+                                json={
+                                    "username": username,
+                                    "password": password,
+                                    "mfa_method": mfa_method,
+                                },
+                                timeout=aiohttp.ClientTimeout(total=90),
+                            ) as resp:
+                                connected = True
+                                self.context["auth_url"] = target_url
+                                self.context["username"] = username
+                                self.context["password"] = password
+                                if resp.status == 200:
+                                    res_json = await resp.json()
+                                    if res_json.get("success") and res_json.get("cookies"):
+                                        cookies = res_json["cookies"]
+                                        return self.async_update_reload_and_abort(
+                                            self._reauth_entry,
+                                            data={
+                                                **self._reauth_entry.data,
+                                                CONF_COOKIE: cookies,
+                                                CONF_USERNAME: username,
+                                                CONF_PASSWORD: password,
+                                                CONF_AUTH_SERVER_URL: target_url,
+                                            },
+                                        )
+                                    elif res_json.get("mfa_required"):
+                                        return await self.async_step_mfa()
+                                    else:
+                                        _LOGGER.error("Auth helper response: %s", res_json)
+                                        errors["base"] = "invalid_auth"
+                                        break
+                                else:
+                                    errors["base"] = "invalid_auth"
+                                    break
+                    except aiohttp.ClientConnectorError:
+                        _LOGGER.debug("Could not reach auth server at %s", target_url)
+                        continue
+                    except Exception as err:
+                        _LOGGER.exception("Reauth attempt to %s failed: %s", target_url, err)
+                        errors["base"] = "unknown"
+                        break
+
+                if not connected and not errors:
+                    errors["base"] = "auth_server_unavailable"
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_USERNAME, default=default_username): str,
+                vol.Required(CONF_PASSWORD): str,
+                vol.Required(CONF_MFA_METHOD, default=default_mfa): vol.In(
+                    [MFA_METHOD_SMS, MFA_METHOD_EMAIL]
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"username": default_username},
         )
 
     async def async_step_automated(
@@ -82,6 +184,8 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             ) as resp:
                                 connected = True
                                 self.context["auth_url"] = target_url
+                                self.context["username"] = username
+                                self.context["password"] = password
                                 if resp.status == 200:
                                     res_json = await resp.json()
                                     if res_json.get("success") and res_json.get("cookies"):
@@ -160,6 +264,17 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 res_json = await resp.json()
                                 if res_json.get("success") and res_json.get("cookies"):
                                     cookies = res_json["cookies"]
+                                    if getattr(self, "_reauth_entry", None):
+                                        return self.async_update_reload_and_abort(
+                                            self._reauth_entry,
+                                            data={
+                                                **self._reauth_entry.data,
+                                                CONF_COOKIE: cookies,
+                                                CONF_USERNAME: username or self._reauth_entry.data.get(CONF_USERNAME),
+                                                CONF_PASSWORD: password or self._reauth_entry.data.get(CONF_PASSWORD),
+                                                CONF_AUTH_SERVER_URL: auth_url,
+                                            },
+                                        )
                                     if username:
                                         await self.async_set_unique_id(username.lower())
                                         self._abort_if_unique_id_configured()
@@ -169,6 +284,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                             CONF_COOKIE: cookies,
                                             CONF_USERNAME: username,
                                             CONF_PASSWORD: password,
+                                            CONF_AUTH_SERVER_URL: auth_url,
                                         },
                                     )
                                 else:
@@ -205,6 +321,14 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 try:
                     client = PsegClient(cookie)
                     await self.hass.async_add_executor_job(client.test_connection)
+                    if getattr(self, "_reauth_entry", None):
+                        return self.async_update_reload_and_abort(
+                            self._reauth_entry,
+                            data={
+                                **self._reauth_entry.data,
+                                CONF_COOKIE: cookie,
+                            },
+                        )
                     return self.async_create_entry(
                         title="PSE&G Energy",
                         data={

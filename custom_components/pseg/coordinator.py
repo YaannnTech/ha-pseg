@@ -8,8 +8,11 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -49,6 +52,44 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             update_interval=timedelta(hours=DEFAULT_SCAN_INTERVAL_HOURS),
         )
 
+    def _dismiss_auth_issues(self) -> None:
+        """Dismiss persistent notification and repairs issue once authenticated."""
+        if not self.config_entry:
+            return
+        persistent_notification.async_dismiss(
+            self.hass,
+            notification_id=f"pseg_reauth_{self.config_entry.entry_id}",
+        )
+        ir.async_delete_issue(
+            self.hass,
+            DOMAIN,
+            f"reauth_required_{self.config_entry.entry_id}",
+        )
+
+    def _raise_auth_issues(self, err_msg: str) -> None:
+        """Raise persistent notification and repairs issue when authentication is required."""
+        entry_id = self.config_entry.entry_id if self.config_entry else "default"
+        persistent_notification.async_create(
+            self.hass,
+            title="PSE&G Authentication Required",
+            message=(
+                "Your PSE&G session has expired and requires two-factor verification. "
+                "Please go to **Settings > Devices & Services > PSE&G** and click **Reconfigure** to complete sign-in."
+            ),
+            notification_id=f"pseg_reauth_{entry_id}",
+        )
+        if self.config_entry:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                f"reauth_required_{entry_id}",
+                is_fixable=True,
+                is_persistent=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="reauth_required",
+                data={"entry_id": entry_id},
+            )
+
     async def _async_update_data(self) -> Dict[str, Any]:
         """Fetch data from PSE&G."""
         try:
@@ -57,6 +98,7 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             )
             self.next_update_time = dt_util.utcnow() + self.update_interval
             data["next_update"] = self.next_update_time.isoformat()
+            self._dismiss_auth_issues()
             return data
         except PsegAuthError as err:
             _LOGGER.warning("Session error: %s. Attempting silent re-authentication...", err)
@@ -96,10 +138,18 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                         )
                                         self.next_update_time = dt_util.utcnow() + self.update_interval
                                         data["next_update"] = self.next_update_time.isoformat()
+                                        self._dismiss_auth_issues()
                                         return data
+                                    elif res_json.get("mfa_required"):
+                                        _LOGGER.warning("Silent refresh requires two-factor OTP verification")
+                                        break
                     except Exception as refresh_err:
-                        _LOGGER.debug("Silent refresh via %s failed: %s", auth_url, refresh_err)
+                        _LOGGER.warning("Silent refresh via %s failed: %s", auth_url, refresh_err)
 
-            raise UpdateFailed(f"Session expired. Please update authentication in integration options: {err}") from err
+            # Silent re-authentication could not complete -> alert user and trigger Reconfigure
+            self._raise_auth_issues(str(err))
+            raise ConfigEntryAuthFailed(
+                f"Session expired or MFA required. Please re-authenticate under Settings > Devices & Services > PSE&G: {err}"
+            ) from err
         except Exception as err:
             raise UpdateFailed(f"Error communicating with PSE&G: {err}") from err
