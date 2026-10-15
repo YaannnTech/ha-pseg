@@ -56,13 +56,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     cookie = entry.data.get(CONF_COOKIE, "")
     client = PsegClient(cookie)
     coordinator = PsegDataUpdateCoordinator(hass, client, dict(entry.data), config_entry=entry)
-
-    # Initial data refresh
-    await coordinator.async_config_entry_first_refresh()
-
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Initial data refresh
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryAuthFailed:
+        coordinator.auth_required = True
+        coordinator.status = "auth_required"
+        raise
 
     return True
 

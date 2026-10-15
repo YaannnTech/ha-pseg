@@ -14,9 +14,17 @@
           "mfa_method": "Two-Factor Method (SMS or Email)"
         }
       },
+      "reauth": {
+        "title": "Re-authenticate PSE&G",
+        "description": "Your PSE&G session has expired. Select how you would like to re-authenticate:",
+        "menu_options": {
+          "reauth_confirm": "Automated Sign-In (Credentials & MFA)",
+          "cookie": "Browser Session Cookie"
+        }
+      },
       "reauth_confirm": {
         "title": "Re-authenticate PSE&G",
-        "description": "Your PSE&G session has expired. Please verify your credentials and MFA method to re-authenticate account {username}.",
+        "description": "Please verify your credentials and MFA method to re-authenticate account {username}.",
         "data": {
           "username": "Username or Email",
           "password": "Password",
@@ -41,6 +49,8 @@
     "error": {
       "missing_credentials": "Please fill in all required fields.",
       "invalid_auth": "Authentication failed. Please verify your username and password.",
+      "recaptcha_blocked": "Google reCAPTCHA has throttled automated audio challenge solving. Please choose 'Browser Session Cookie' from the re-authentication menu, or try again later.",
+      "auth_server_error": "The automated login helper encountered an error on port 8000. Please try again or use the session cookie option.",
       "invalid_cookie": "The session cookie provided was rejected or has expired.",
       "auth_server_unavailable": "Could not connect to the local automated sign-in service on port 8000. Alternatively, choose 'Browser Session Cookie' from the menu.",
       "invalid_code": "The verification code entered is invalid or expired.",

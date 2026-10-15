@@ -45,6 +45,10 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self.entry_data = entry_data
         self.config_entry = config_entry
         self.next_update_time: Optional[datetime] = None
+        self._last_valid_data: Optional[Dict[str, Any]] = None
+        self.auth_required: bool = False
+        self.status: str = "connected"
+        self.last_successful_update: Optional[str] = None
         super().__init__(
             hass,
             _LOGGER,
@@ -98,9 +102,15 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             )
             self.next_update_time = dt_util.utcnow() + self.update_interval
             data["next_update"] = self.next_update_time.isoformat()
+            self._last_valid_data = data
+            self.last_successful_update = dt_util.utcnow().isoformat()
+            self.auth_required = False
+            self.status = "connected"
             self._dismiss_auth_issues()
             return data
         except PsegAuthError as err:
+            self.auth_required = True
+            self.status = "auth_required"
             _LOGGER.warning("Session error: %s. Attempting silent re-authentication...", err)
             username = self.entry_data.get(CONF_USERNAME)
             password = self.entry_data.get(CONF_PASSWORD)
@@ -138,6 +148,10 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                         )
                                         self.next_update_time = dt_util.utcnow() + self.update_interval
                                         data["next_update"] = self.next_update_time.isoformat()
+                                        self._last_valid_data = data
+                                        self.last_successful_update = dt_util.utcnow().isoformat()
+                                        self.auth_required = False
+                                        self.status = "connected"
                                         self._dismiss_auth_issues()
                                         return data
                                     elif res_json.get("mfa_required"):
@@ -147,9 +161,12 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                         _LOGGER.warning("Silent refresh via %s failed: %s", auth_url, refresh_err)
 
             # Silent re-authentication could not complete -> alert user and trigger Reconfigure
+            self.auth_required = True
+            self.status = "auth_required"
             self._raise_auth_issues(str(err))
             raise ConfigEntryAuthFailed(
                 f"Session expired or MFA required. Please re-authenticate under Settings > Devices & Services > PSE&G: {err}"
             ) from err
         except Exception as err:
+            self.status = "error"
             raise UpdateFailed(f"Error communicating with PSE&G: {err}") from err

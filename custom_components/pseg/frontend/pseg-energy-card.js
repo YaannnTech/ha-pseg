@@ -54,10 +54,29 @@ class PsegEnergyCard extends HTMLElement {
   }
 
   set hass(hass) {
+    const oldHass = this._hass;
     this._hass = hass;
-    if (this.config) {
-      this.render();
+    if (!this.config) return;
+
+    if (oldHass && oldHass.states && hass.states) {
+      const e1 = this.config.entity;
+      const e2 = this.config.toggle_entity;
+      const e3 = this.config.range_toggle_entity;
+      const e4 = this.config.next_update_entity;
+      const e5 = "sensor.pseg_connection_status";
+
+      const sameE1 = !e1 || oldHass.states[e1] === hass.states[e1];
+      const sameE2 = !e2 || oldHass.states[e2] === hass.states[e2];
+      const sameE3 = !e3 || oldHass.states[e3] === hass.states[e3];
+      const sameE4 = !e4 || oldHass.states[e4] === hass.states[e4];
+      const sameE5 = !hass.states[e5] || oldHass.states[e5] === hass.states[e5];
+
+      if (sameE1 && sameE2 && sameE3 && sameE4 && sameE5) {
+        return;
+      }
     }
+
+    this.render();
   }
 
   connectedCallback() {
@@ -137,57 +156,43 @@ class PsegEnergyCard extends HTMLElement {
                  this._hass.states["sensor.pseg_electricity_yesterday"] || 
                  this._hass.states["sensor.pseg_smart_energy_meter_electricity_yesterday"];
       }
-      if (!entity) {
-        this.shadowRoot.innerHTML = `
-          <ha-card style="background: rgba(25, 25, 25, 0.4); backdrop-filter: blur(10px); padding: 14px 18px; border-radius: 18px; color: #ff6b6b; border: 1px solid rgba(255,255,255,0.08); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Roboto, sans-serif; font-size: 13px;">
-            PSE&amp;G Entity not found: <code>${this.config.entity}</code>
-          </ha-card>
-        `;
-        return;
+
+      // 1. Cache valid entity attributes if present
+      if (entity && entity.attributes && Array.isArray(entity.attributes.history_14d) && entity.attributes.history_14d.length > 0) {
+        this._cachedEntity = {
+          state: entity.state,
+          attributes: { ...entity.attributes }
+        };
+        try {
+          localStorage.setItem("pseg_last_valid_entity", JSON.stringify(this._cachedEntity));
+        } catch (_) {}
       }
 
-      if (entity.state === "unavailable" || entity.state === "unknown") {
+      // 2. Fall back to cached entity if live entity is unavailable, unknown, or missing
+      const isUnavailable = !entity || entity.state === "unavailable" || entity.state === "unknown";
+      if (isUnavailable) {
+        if (!this._cachedEntity) {
+          try {
+            const stored = localStorage.getItem("pseg_last_valid_entity");
+            if (stored) this._cachedEntity = JSON.parse(stored);
+          } catch (_) {}
+        }
+        if (this._cachedEntity) {
+          entity = {
+            state: this._cachedEntity.state,
+            attributes: { ...this._cachedEntity.attributes }
+          };
+        }
+      }
+
+      if (!entity || !entity.attributes || !entity.attributes.history_14d || entity.attributes.history_14d.length === 0) {
         this.shadowRoot.innerHTML = `
-          <style>
-            ha-card {
-              background: rgba(25, 25, 25, 0.45);
-              backdrop-filter: blur(12px);
-              -webkit-backdrop-filter: blur(12px);
-              border-radius: 18px;
-              border: 1px solid rgba(255, 255, 255, 0.08);
-              padding: 16px 20px;
-              display: flex;
-              align-items: center;
-              justify-content: space-between;
-              color: rgba(255, 255, 255, 0.7);
-              font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-              font-size: 13px;
-            }
-            .status-dot {
-              width: 8px;
-              height: 8px;
-              border-radius: 50%;
-              background: #f59e0b;
-              display: inline-block;
-              margin-right: 10px;
-              box-shadow: 0 0 8px #f59e0b;
-            }
-            .status-title {
-              color: #ffffff;
-              font-weight: 600;
-            }
-            .status-sub {
-              font-size: 11px;
-              color: rgba(255, 255, 255, 0.45);
-              margin-top: 2px;
-            }
-          </style>
-          <ha-card id="cardWrapper">
+          <ha-card style="background: rgba(25, 25, 25, 0.45); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-radius: 18px; border: 1px solid rgba(255, 255, 255, 0.08); padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; color: rgba(255, 255, 255, 0.7); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Roboto, sans-serif; font-size: 13px;">
             <div style="display: flex; align-items: center;">
-              <span class="status-dot"></span>
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; display: inline-block; margin-right: 10px; box-shadow: 0 0 8px #f59e0b;"></span>
               <div>
-                <div class="status-title">PSE&amp;G Energy</div>
-                <div class="status-sub">Updating meter data &bull; Waiting for sync...</div>
+                <div style="color: #ffffff; font-weight: 600;">PSE&amp;G Energy</div>
+                <div style="font-size: 11px; color: rgba(255, 255, 255, 0.45); margin-top: 2px;">Waiting for initial data sync...</div>
               </div>
             </div>
             <span style="font-size: 11px; color: rgba(255,255,255,0.4);">Connecting</span>
@@ -195,6 +200,11 @@ class PsegEnergyCard extends HTMLElement {
         `;
         return;
       }
+
+      const connectionStatus = this._hass.states["sensor.pseg_connection_status"]?.state;
+      const isAuthRequired = isUnavailable ||
+                            entity.attributes.auth_required === true ||
+                            connectionStatus === "auth_required";
 
     const toggleEnt = this.config.toggle_entity || "input_boolean.pseg_display_dollars";
     const isDollars = this._hass.states[toggleEnt]?.state === "on";
@@ -238,8 +248,15 @@ class PsegEnergyCard extends HTMLElement {
       }
     });
 
-    // Reference end date
-    let endDate = latestRawDate;
+    // Reference end date: yesterday (since meter readings are delayed by 1 day)
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 86400000);
+    const yesterdayIso = yesterday.toISOString().slice(0, 10);
+
+    let endDate = yesterdayIso;
+    if (latestRawDate && latestRawDate > endDate) {
+      endDate = latestRawDate;
+    }
     if (!endDate && rawHistory.length > 0) {
       endDate = rawHistory[rawHistory.length - 1].date;
     }
@@ -565,6 +582,38 @@ class PsegEnergyCard extends HTMLElement {
       </style>
 
       <ha-card id="cardWrapper" title="Click for details & meter history">
+        ${isAuthRequired ? `
+          <div id="psegAuthWarning" style="
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(245, 158, 11, 0.16);
+            border: 1px solid rgba(245, 158, 11, 0.38);
+            border-radius: 9px;
+            padding: 5px 9px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.2s ease;
+          ">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 13px; line-height: 1;">⚠️</span>
+              <span style="font-size: 11px; font-weight: 600; color: #fbbf24; letter-spacing: -0.1px;">
+                Session expired &bull; Re-authentication required
+              </span>
+            </div>
+            <span style="
+              font-size: 9.5px;
+              font-weight: 700;
+              color: #fbbf24;
+              background: rgba(245, 158, 11, 0.25);
+              border-radius: 5px;
+              padding: 2px 6px;
+              text-transform: uppercase;
+              letter-spacing: 0.3px;
+            ">Reconfigure</span>
+          </div>
+        ` : ''}
+
         <!-- Row 1: Left Meta + Right Single-Line Mini Stats -->
         <div class="top-row">
           <div class="meta-col">
@@ -617,6 +666,15 @@ class PsegEnergyCard extends HTMLElement {
         </div>
       </ha-card>
     `;
+
+    // Click handler for auth warning banner
+    const authBanner = this.shadowRoot.getElementById("psegAuthWarning");
+    if (authBanner) {
+      authBanner.addEventListener("click", (e) => {
+        e.stopPropagation();
+        window.location.href = "/config/integrations";
+      });
+    }
 
     // Click handler for popup
     this.shadowRoot.getElementById("cardWrapper")?.addEventListener("click", () => {

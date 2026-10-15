@@ -56,7 +56,10 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._reauth_entry = self.hass.config_entries.async_get_entry(
             self.context["entry_id"]
         )
-        return await self.async_step_reauth_confirm()
+        return self.async_show_menu(
+            step_id="reauth",
+            menu_options=["reauth_confirm", "cookie"],
+        )
 
     async def async_step_reauth_confirm(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -119,7 +122,17 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                         errors["base"] = "invalid_auth"
                                         break
                                 else:
-                                    errors["base"] = "invalid_auth"
+                                    try:
+                                        res_json = await resp.json()
+                                    except Exception:
+                                        res_json = {}
+                                    if resp.status == 403 or res_json.get("recaptcha_blocked"):
+                                        errors["base"] = "recaptcha_blocked"
+                                    elif resp.status == 500:
+                                        _LOGGER.error("Auth helper returned 500: %s", res_json)
+                                        errors["base"] = "auth_server_error"
+                                    else:
+                                        errors["base"] = "invalid_auth"
                                     break
                     except aiohttp.ClientConnectorError:
                         _LOGGER.debug("Could not reach auth server at %s", target_url)
@@ -208,9 +221,19 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                         errors["base"] = "invalid_auth"
                                         break
                                 else:
-                                    err_text = await resp.text()
-                                    _LOGGER.error("Auth helper returned status %s: %s", resp.status, err_text)
-                                    errors["base"] = "invalid_auth"
+                                    try:
+                                        res_json = await resp.json()
+                                    except Exception:
+                                        res_json = {}
+                                    if resp.status == 403 or res_json.get("recaptcha_blocked"):
+                                        errors["base"] = "recaptcha_blocked"
+                                    elif resp.status == 500:
+                                        _LOGGER.error("Auth helper returned 500: %s", res_json)
+                                        errors["base"] = "auth_server_error"
+                                    else:
+                                        err_text = await resp.text()
+                                        _LOGGER.error("Auth helper returned status %s: %s", resp.status, err_text)
+                                        errors["base"] = "invalid_auth"
                                     break
                     except aiohttp.ClientConnectorError:
                         _LOGGER.debug("Could not reach auth server at %s", target_url)
