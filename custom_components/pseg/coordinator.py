@@ -13,6 +13,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
+from homeassistant.components.recorder.statistics import (
+    async_import_statistics,
+    get_last_statistics,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -71,16 +77,24 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             f"reauth_required_{self.config_entry.entry_id}",
         )
 
-    def _raise_auth_issues(self, err_msg: str) -> None:
+    def _raise_auth_issues(self, err_msg: str, addon_offline: bool = False) -> None:
         """Raise persistent notification and repairs issue when authentication is required."""
         entry_id = self.config_entry.entry_id if self.config_entry else "default"
+        if addon_offline:
+            msg = (
+                "Your PSE&G session has expired and the automated Companion Add-on on port 8000 is not running. "
+                "Please start or restart the **PSE&G Auth Companion** under **Settings > Add-ons**, or go to "
+                "**Settings > Devices & Services > PSE&G** and click **Reconfigure** to authenticate with a Browser Session Cookie."
+            )
+        else:
+            msg = (
+                "Your PSE&G session has expired and requires two-factor verification. "
+                "Please go to **Settings > Devices & Services > PSE&G** and click **Reconfigure** to complete sign-in."
+            )
         persistent_notification.async_create(
             self.hass,
             title="PSE&G Authentication Required",
-            message=(
-                "Your PSE&G session has expired and requires two-factor verification. "
-                "Please go to **Settings > Devices & Services > PSE&G** and click **Reconfigure** to complete sign-in."
-            ),
+            message=msg,
             notification_id=f"pseg_reauth_{entry_id}",
         )
         if self.config_entry:
@@ -101,6 +115,11 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             data = await self.hass.async_add_executor_job(
                 self.client.fetch_energy_data, 14
             )
+            if "history_14d" in data and data["history_14d"]:
+                try:
+                    await self.async_record_statistics(data["history_14d"])
+                except Exception as stat_err:
+                    _LOGGER.warning("Could not record statistics into LTS: %s", stat_err)
             self.next_update_time = dt_util.utcnow() + self.update_interval
             data["next_update"] = self.next_update_time.isoformat()
             self._last_valid_data = data
@@ -119,19 +138,21 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
             # Support localhost and host LAN IP for cross-container reachability
             candidate_urls = [configured_url]
-            for fallback in ["http://10.0.2.52:8000", "http://127.0.0.1:8000"]:
+            for fallback in ["http://127.0.0.1:8000", "http://10.0.1.51:8000", "http://10.0.2.52:8000", "http://localhost:8000"]:
                 if fallback not in candidate_urls:
                     candidate_urls.append(fallback)
 
+            addon_connected = False
             if username and password:
                 session = async_get_clientsession(self.hass)
                 for auth_url in candidate_urls:
                     try:
                         async with session.post(
                             f"{auth_url}/login",
-                            json={"username": username, "password": password},
+                            json={"username": username, "password": password, "dispatch_mfa": False},
                             timeout=aiohttp.ClientTimeout(total=90),
                         ) as resp:
+                                addon_connected = True
                                 if resp.status == 200:
                                     res_json = await resp.json()
                                     if res_json.get("success") and res_json.get("cookies"):
@@ -147,6 +168,11 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                         data = await self.hass.async_add_executor_job(
                                             self.client.fetch_energy_data, 14
                                         )
+                                        if "history_14d" in data and data["history_14d"]:
+                                            try:
+                                                await self.async_record_statistics(data["history_14d"])
+                                            except Exception as stat_err:
+                                                _LOGGER.warning("Could not record statistics into LTS: %s", stat_err)
                                         self.next_update_time = dt_util.utcnow() + self.update_interval
                                         data["next_update"] = self.next_update_time.isoformat()
                                         self._last_valid_data = data
@@ -164,10 +190,218 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             # Silent re-authentication could not complete -> alert user and trigger Reconfigure
             self.auth_required = True
             self.status = "auth_required"
-            self._raise_auth_issues(str(err))
+            addon_offline = not addon_connected
+            self._raise_auth_issues(str(err), addon_offline=addon_offline)
+            if addon_offline:
+                raise ConfigEntryAuthFailed(
+                    "PSE&G Companion Add-on is offline (port 8000 unreachable). Please start or restart the companion add-on under Settings > Add-ons, or re-authenticate with a Browser Session Cookie."
+                ) from err
             raise ConfigEntryAuthFailed(
                 "Session expired or MFA required. Please re-authenticate under Settings > Devices & Services > PSE&G."
             ) from err
         except Exception as err:
             self.status = "error"
             raise UpdateFailed(f"Error communicating with PSE&G: {err}") from err
+
+    async def async_record_statistics(self, records: list[dict[str, Any]]) -> None:
+        """Import daily energy consumption and cost records into Home Assistant long-term statistics."""
+        if not records:
+            return
+
+        sorted_records = sorted(records, key=lambda x: x["date"])
+        tz = dt_util.get_time_zone(self.hass.config.time_zone)
+
+        consumption_meta: StatisticMetaData = {
+            "has_mean": False,
+            "has_sum": True,
+            "mean_type": 0,
+            "unit_class": "energy",
+            "name": "PSE&G Electricity Consumption",
+            "source": "recorder",
+            "statistic_id": "sensor.pseg_electricity_consumption",
+            "unit_of_measurement": "kWh",
+        }
+
+        cost_meta: StatisticMetaData = {
+            "has_mean": False,
+            "has_sum": True,
+            "mean_type": 0,
+            "unit_class": None,
+            "name": "PSE&G Electricity Cost",
+            "source": "recorder",
+            "statistic_id": "sensor.pseg_electricity_cost",
+            "unit_of_measurement": "USD",
+        }
+
+        # Check existing statistics baseline before the first record's start timestamp
+        first_date_str = sorted_records[0]["date"]
+        first_local_dt = datetime.strptime(first_date_str, "%Y-%m-%d").replace(tzinfo=tz)
+        first_start_utc = dt_util.as_utc(first_local_dt)
+
+        last_consumption_sum = 0.0
+        last_cost_sum = 0.0
+        has_prior_stat = False
+
+        try:
+            last_stats = await get_instance(self.hass).async_add_executor_job(
+                get_last_statistics,
+                self.hass,
+                1,
+                "sensor.pseg_electricity_consumption",
+                True,
+                {"sum", "start"},
+            )
+            if "sensor.pseg_electricity_consumption" in last_stats:
+                stat_list = last_stats["sensor.pseg_electricity_consumption"]
+                if stat_list:
+                    last_stat = stat_list[0]
+                    stat_start = last_stat.get("start")
+                    if isinstance(stat_start, (int, float)):
+                        stat_start_dt = datetime.fromtimestamp(stat_start, tz=dt_util.UTC)
+                    else:
+                        stat_start_dt = stat_start
+                    if stat_start_dt and stat_start_dt < first_start_utc:
+                        last_consumption_sum = float(last_stat.get("sum") or 0.0)
+                        has_prior_stat = True
+        except Exception as err:
+            _LOGGER.debug("Could not query last consumption statistic: %s", err)
+
+        try:
+            last_cost_stats = await get_instance(self.hass).async_add_executor_job(
+                get_last_statistics,
+                self.hass,
+                1,
+                "sensor.pseg_electricity_cost",
+                True,
+                {"sum", "start"},
+            )
+            if "sensor.pseg_electricity_cost" in last_cost_stats:
+                stat_list = last_cost_stats["sensor.pseg_electricity_cost"]
+                if stat_list:
+                    last_stat = stat_list[0]
+                    stat_start = last_stat.get("start")
+                    if isinstance(stat_start, (int, float)):
+                        stat_start_dt = datetime.fromtimestamp(stat_start, tz=dt_util.UTC)
+                    else:
+                        stat_start_dt = stat_start
+                    if stat_start_dt and stat_start_dt < first_start_utc:
+                        last_cost_sum = float(last_stat.get("sum") or 0.0)
+        except Exception as err:
+            _LOGGER.debug("Could not query last cost statistic: %s", err)
+
+        consumption_stats: list[StatisticData] = []
+        cost_stats: list[StatisticData] = []
+
+        # If no prior statistic exists before this batch, prepend baseline point for Day 0 delta
+        if not has_prior_stat:
+            baseline_dt = first_start_utc - timedelta(days=1)
+            consumption_stats.append(
+                StatisticData(
+                    start=baseline_dt,
+                    state=0.0,
+                    sum=round(last_consumption_sum, 2),
+                )
+            )
+            cost_stats.append(
+                StatisticData(
+                    start=baseline_dt,
+                    state=0.0,
+                    sum=round(last_cost_sum, 2),
+                )
+            )
+
+        running_consumption = last_consumption_sum
+        running_cost = last_cost_sum
+
+        for r in sorted_records:
+            date_str = r["date"]
+            kwh = float(r.get("kwh") or 0.0)
+            cost = float(r.get("cost") or 0.0)
+
+            local_dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tz)
+            start_utc = dt_util.as_utc(local_dt)
+
+            running_consumption += kwh
+            running_cost += cost
+
+            consumption_stats.append(
+                StatisticData(
+                    start=start_utc,
+                    state=kwh,
+                    sum=round(running_consumption, 2),
+                )
+            )
+            cost_stats.append(
+                StatisticData(
+                    start=start_utc,
+                    state=cost,
+                    sum=round(running_cost, 2),
+                )
+            )
+
+        async_import_statistics(self.hass, consumption_meta, consumption_stats)
+        async_import_statistics(self.hass, cost_meta, cost_stats)
+        _LOGGER.info(
+            "Imported %d daily statistics into LTS (range: %s to %s)",
+            len(sorted_records),
+            sorted_records[0]["date"],
+            sorted_records[-1]["date"],
+        )
+
+    async def async_backfill_history(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> int:
+        """Fetch and import historical data into Long-Term Statistics."""
+        now = dt_util.now()
+        if not end_date:
+            end_date_str = now.strftime("%Y-%m-%d")
+        elif hasattr(end_date, "strftime"):
+            end_date_str = end_date.strftime("%Y-%m-%d")
+        else:
+            end_date_str = str(end_date)
+
+        if not start_date:
+            start_dt = now - timedelta(days=730)
+            start_date_str = start_dt.strftime("%Y-%m-%d")
+        elif hasattr(start_date, "strftime"):
+            start_date_str = start_date.strftime("%Y-%m-%d")
+        else:
+            start_date_str = str(start_date)
+
+        _LOGGER.info(
+            "Starting PSE&G historical backfill from %s to %s...",
+            start_date_str,
+            end_date_str,
+        )
+
+        records = await self.hass.async_add_executor_job(
+            self.client.fetch_history_range,
+            start_date_str,
+            end_date_str,
+            90,
+        )
+
+        if not records:
+            _LOGGER.warning("No historical records returned from PSE&G for %s to %s", start_date_str, end_date_str)
+            return 0
+
+        await self.async_record_statistics(records)
+
+        # Update coordinator state if backfill includes latest readings
+        latest_record = records[-1]
+        if self._last_valid_data is not None:
+            self._last_valid_data["history_14d"] = records[-14:]
+            self._last_valid_data["latest_date"] = latest_record["date"]
+            self._last_valid_data["latest_kwh"] = latest_record["kwh"]
+            self._last_valid_data["latest_cost"] = latest_record["cost"]
+            if len(records) > 1:
+                prev_record = records[-2]
+                self._last_valid_data["previous_date"] = prev_record["date"]
+                self._last_valid_data["previous_kwh"] = prev_record["kwh"]
+                self._last_valid_data["previous_cost"] = prev_record["cost"]
+            self.async_set_updated_data(self._last_valid_data)
+
+        _LOGGER.info("Completed PSE&G backfill: imported %d days of statistics", len(records))
+        return len(records)

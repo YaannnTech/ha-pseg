@@ -41,13 +41,58 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._user_input: Dict[str, Any] = {}
         self._reauth_entry: Optional[config_entries.ConfigEntry] = None
 
+    async def _async_detect_auth_server(self) -> Optional[str]:
+        """Probe candidate URLs to detect if the companion auth add-on is running."""
+        cached = self.context.get("auth_url")
+        if self._reauth_entry:
+            cached = cached or self._reauth_entry.data.get(CONF_AUTH_SERVER_URL)
+
+        candidate_urls = []
+        if cached:
+            candidate_urls.append(cached)
+        for url in [DEFAULT_AUTH_SERVER_URL, "http://127.0.0.1:8000", "http://10.0.1.51:8000", "http://10.0.2.52:8000", "http://localhost:8000"]:
+            if url not in candidate_urls:
+                candidate_urls.append(url)
+
+        session = async_get_clientsession(self.hass)
+        for base_url in candidate_urls:
+            try:
+                async with session.get(
+                    f"{base_url}/health",
+                    timeout=aiohttp.ClientTimeout(total=1.5),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get("status") == "healthy":
+                            self.context["auth_url"] = base_url
+                            return base_url
+            except Exception:
+                continue
+
+        return None
+
     async def async_step_user(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         """Step 1: Choose connection method."""
+        working_url = await self._async_detect_auth_server()
+        if working_url:
+            menu_options = ["automated", "cookie"]
+            addon_status = ""
+        else:
+            menu_options = ["cookie"]
+            addon_status = (
+                "⚠️ **PSE&G Auth Companion Add-on Not Detected**\n\n"
+                "Automated OTP/MFA login is disabled because the companion add-on is not running on port 8000. "
+                "To enable automated sign-in, install and start the companion add-on from "
+                "[ha-pseg-auth-addon](https://github.com/sidprax/ha-pseg-auth-addon).\n\n"
+                "Alternatively, connect using a **Browser Session Cookie** below:\n\n"
+            )
+
         return self.async_show_menu(
             step_id="user",
-            menu_options=["automated", "cookie"],
+            menu_options=menu_options,
+            description_placeholders={"addon_status": addon_status},
         )
 
     async def async_step_reauth(
@@ -57,9 +102,24 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._reauth_entry = self.hass.config_entries.async_get_entry(
             self.context["entry_id"]
         )
+        working_url = await self._async_detect_auth_server()
+        if working_url:
+            menu_options = ["reauth_confirm", "cookie"]
+            addon_status = ""
+        else:
+            menu_options = ["cookie"]
+            addon_status = (
+                "⚠️ **PSE&G Auth Companion Add-on Not Detected**\n\n"
+                "Automated re-authentication is disabled because the companion add-on is not running. "
+                "To enable automated sign-in, install or start the companion add-on from "
+                "[ha-pseg-auth-addon](https://github.com/sidprax/ha-pseg-auth-addon).\n\n"
+                "Alternatively, re-authenticate using a **Browser Session Cookie** below:\n\n"
+            )
+
         return self.async_show_menu(
             step_id="reauth",
-            menu_options=["reauth_confirm", "cookie"],
+            menu_options=menu_options,
+            description_placeholders={"addon_status": addon_status},
         )
 
     async def async_step_reconfigure(
@@ -69,9 +129,24 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._reauth_entry = self.hass.config_entries.async_get_entry(
             self.context["entry_id"]
         )
+        working_url = await self._async_detect_auth_server()
+        if working_url:
+            menu_options = ["reauth_confirm", "cookie"]
+            addon_status = ""
+        else:
+            menu_options = ["cookie"]
+            addon_status = (
+                "⚠️ **PSE&G Auth Companion Add-on Not Detected**\n\n"
+                "Automated reconfiguration is disabled because the companion add-on is not running. "
+                "To enable automated sign-in, install or start the companion add-on from "
+                "[ha-pseg-auth-addon](https://github.com/sidprax/ha-pseg-auth-addon).\n\n"
+                "Alternatively, update credentials using a **Browser Session Cookie** below:\n\n"
+            )
+
         return self.async_show_menu(
             step_id="reconfigure",
-            menu_options=["reauth_confirm", "cookie"],
+            menu_options=menu_options,
+            description_placeholders={"addon_status": addon_status},
         )
 
     async def async_step_reauth_confirm(
@@ -93,7 +168,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "missing_credentials"
             else:
                 candidate_urls = [auth_url]
-                for fallback in ["http://10.0.2.52:8000", "http://127.0.0.1:8000"]:
+                for fallback in ["http://127.0.0.1:8000", "http://10.0.1.51:8000", "http://10.0.2.52:8000", "http://localhost:8000"]:
                     if fallback not in candidate_urls:
                         candidate_urls.append(fallback)
 
@@ -108,6 +183,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 "username": username,
                                 "password": password,
                                 "mfa_method": mfa_method,
+                                "dispatch_mfa": True,
                             },
                             timeout=aiohttp.ClientTimeout(total=90),
                         ) as resp:
@@ -200,7 +276,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "missing_credentials"
             else:
                 candidate_urls = [auth_url]
-                for fallback in ["http://10.0.2.52:8000", "http://127.0.0.1:8000"]:
+                for fallback in ["http://127.0.0.1:8000", "http://10.0.1.51:8000", "http://10.0.2.52:8000", "http://localhost:8000"]:
                     if fallback not in candidate_urls:
                         candidate_urls.append(fallback)
 
@@ -215,6 +291,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 "username": username,
                                 "password": password,
                                 "mfa_method": mfa_method,
+                                "dispatch_mfa": True,
                             },
                             timeout=aiohttp.ClientTimeout(total=90),
                         ) as resp:
@@ -303,6 +380,11 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         password = self.context.get("password", "")
 
         if user_input is not None:
+            if user_input.get("restart"):
+                if getattr(self, "_reauth_entry", None):
+                    return await self.async_step_reauth_confirm()
+                return await self.async_step_user()
+
             code = user_input.get(CONF_MFA_CODE, "").strip()
             if not code:
                 errors["base"] = "invalid_code"
@@ -323,6 +405,11 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 mfa_success = True
                             else:
                                 errors["base"] = "invalid_code"
+                        elif resp.status == 400:
+                            _LOGGER.warning("Auth session expired on helper service, restarting sign-in")
+                            if getattr(self, "_reauth_entry", None):
+                                return await self.async_step_reauth_confirm()
+                            return await self.async_step_user()
                         else:
                             errors["base"] = "invalid_code"
                 except Exception as err:
@@ -356,7 +443,8 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_MFA_CODE): str,
+                vol.Optional(CONF_MFA_CODE, default=""): str,
+                vol.Optional("restart", default=False): bool,
             }
         )
 

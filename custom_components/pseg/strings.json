@@ -3,7 +3,11 @@
     "step": {
       "user": {
         "title": "Connect PSE&G Account",
-        "description": "Select how you would like to connect your PSE&G MySmartEnergy account:"
+        "description": "{addon_status}Select how you would like to connect your PSE&G MySmartEnergy account:",
+        "menu_options": {
+          "automated": "Automated Sign-In (Requires Companion Add-on)",
+          "cookie": "Browser Session Cookie (No Add-on Required)"
+        }
       },
       "automated": {
         "title": "Automated Sign-In",
@@ -16,7 +20,7 @@
       },
       "reauth": {
         "title": "Re-authenticate PSE&G",
-        "description": "Your PSE&G session has expired. Select how you would like to re-authenticate:",
+        "description": "{addon_status}Your PSE&G session has expired. Select how you would like to re-authenticate:",
         "menu_options": {
           "reauth_confirm": "Automated Sign-In (Credentials & MFA)",
           "cookie": "Browser Session Cookie"
@@ -24,7 +28,7 @@
       },
       "reconfigure": {
         "title": "Reconfigure PSE&G",
-        "description": "Select how you would like to update your PSE&G connection:",
+        "description": "{addon_status}Select how you would like to update your PSE&G connection:",
         "menu_options": {
           "reauth_confirm": "Automated Sign-In (Credentials & MFA)",
           "cookie": "Browser Session Cookie"
@@ -41,9 +45,10 @@
       },
       "mfa": {
         "title": "Two-Factor Verification",
-        "description": "A 6-digit verification code has been sent to your selected phone or email. Enter the code below to complete setup.",
+        "description": "A 6-digit verification code has been sent to your selected phone or email. Enter the code below, or check 'Cancel and restart' to start over.",
         "data": {
-          "mfa_code": "6-Digit Security Code"
+          "mfa_code": "6-Digit Security Code",
+          "restart": "Cancel and restart sign-in"
         }
       },
       "cookie": {
@@ -60,7 +65,7 @@
       "recaptcha_blocked": "Google reCAPTCHA has throttled automated audio challenge solving. Please choose 'Browser Session Cookie' from the re-authentication menu, or try again later.",
       "auth_server_error": "The automated login helper encountered an error on port 8000. Please try again or use the session cookie option.",
       "invalid_cookie": "The session cookie provided was rejected or has expired.",
-      "auth_server_unavailable": "Could not connect to the local automated sign-in service on port 8000. Alternatively, choose 'Browser Session Cookie' from the menu.",
+      "auth_server_unavailable": "The PSE&G Auth Companion Add-on is not running (port 8000 unreachable). Please install and start the add-on from https://github.com/sidprax/ha-pseg-auth-addon to use automated OTP login, or choose 'Browser Session Cookie' from the menu.",
       "invalid_code": "The verification code entered is invalid or expired.",
       "unknown": "An unexpected error occurred while communicating with PSE&G."
     },
@@ -74,6 +79,22 @@
     "reauth_required": {
       "title": "PSE&G Authentication Required",
       "description": "Your PSE&G session has expired and requires two-factor verification. Please re-authenticate your account under Settings > Devices & Services."
+    }
+  },
+  "services": {
+    "backfill_history": {
+      "name": "Backfill Energy History",
+      "description": "Fetches historical daily energy consumption and cost from the PSE&G portal and imports them into Home Assistant Long-Term Statistics.",
+      "fields": {
+        "start_date": {
+          "name": "Start Date",
+          "description": "The starting date to backfill from (YYYY-MM-DD). Defaults to 2 years ago if left empty."
+        },
+        "end_date": {
+          "name": "End Date",
+          "description": "The ending date to backfill to (YYYY-MM-DD). Defaults to today if left empty."
+        }
+      }
     }
   }
 }

@@ -56,14 +56,13 @@ class PsegClient:
         except requests.RequestException as err:
             raise PsegAuthError(f"Failed to connect to PSE&G: {err}") from err
 
-    def fetch_energy_data(self, days_back: int = 14) -> Dict[str, Any]:
-        """Fetch usage and temperature data using the 3-step MyMeter chart sequence."""
-        # Step 1: GET /Dashboard -> Extract __RequestVerificationToken
+    def _get_verification_token(self) -> str:
+        """Extract __RequestVerificationToken from the /Dashboard page."""
         try:
-            resp1 = self.session.get(f"{BASE_URL}/Dashboard", timeout=25)
-            if "signin" in resp1.url.lower() or "login" in resp1.url.lower():
+            resp = self.session.get(f"{BASE_URL}/Dashboard", timeout=25)
+            if "signin" in resp.url.lower() or "login" in resp.url.lower():
                 raise PsegAuthError("Session expired: Redirected to login")
-            dash_html = resp1.text
+            dash_html = resp.text
         except requests.RequestException as err:
             raise PsegAuthError(f"Network error on Dashboard: {err}") from err
 
@@ -73,7 +72,129 @@ class PsegClient:
         )
         if not token_match:
             raise PsegAuthError("Session invalid: __RequestVerificationToken not found on /Dashboard")
-        token = token_match.group(1)
+        return token_match.group(1)
+
+    def fetch_history_range(
+        self,
+        start_date_str: str,
+        end_date_str: str,
+        chunk_days: int = 90,
+    ) -> list[dict[str, Any]]:
+        """Fetch historical usage and cost data across a date range in polite chunks."""
+        token = self._get_verification_token()
+
+        try:
+            start_dt = datetime.strptime(start_date_str, "%Y-%m-%d")
+            end_dt = datetime.strptime(end_date_str, "%Y-%m-%d")
+        except ValueError as err:
+            raise ValueError(f"Invalid date format (expected YYYY-MM-DD): {err}") from err
+
+        if start_dt > end_dt:
+            start_dt, end_dt = end_dt, start_dt
+
+        headers2 = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": BASE_URL,
+        }
+
+        records_map: dict[str, dict[str, Any]] = {}
+        curr_start = start_dt
+
+        while curr_start <= end_dt:
+            curr_end = min(curr_start + timedelta(days=chunk_days), end_dt)
+            chunk_start_str = curr_start.strftime("%Y-%m-%d")
+            chunk_end_str = curr_end.strftime("%Y-%m-%d")
+            _LOGGER.info("Fetching PSE&G history chunk from %s to %s...", chunk_start_str, chunk_end_str)
+
+            chart_setup_data = {
+                "__RequestVerificationToken": token,
+                "UsageInterval": "6",  # 6 = Daily
+                "UsageType": "1",  # 1 = Consumption
+                "jsTargetName": "StorageType",
+                "EnableHoverChart": "true",
+                "Start": chunk_start_str,
+                "End": chunk_end_str,
+                "IsRangeOpen": "False",
+                "MaintainMaxDate": "true",
+                "SelectedViaDateRange": "False",
+                "ChartComparison": "1",
+                "ChartComparison2": "0",
+                "ChartComparison3": "0",
+                "ChartComparison4": "0",
+            }
+
+            try:
+                resp2 = self.session.post(
+                    f"{BASE_URL}/Dashboard/Chart",
+                    data=chart_setup_data,
+                    headers=headers2,
+                    timeout=25,
+                )
+                resp2.raise_for_status()
+
+                ts = int(time.time() * 1000)
+                resp3 = self.session.get(
+                    f"{BASE_URL}/Dashboard/ChartData",
+                    params={"_": ts},
+                    headers=headers2,
+                    timeout=25,
+                )
+                resp3.raise_for_status()
+                data = resp3.json()
+            except requests.RequestException as err:
+                raise PsegAuthError(f"Failed to retrieve chart chunk ({chunk_start_str} to {chunk_end_str}): {err}") from err
+
+            chart_data = data.get("Data")
+            if not chart_data or not isinstance(chart_data, dict):
+                ajax_results = data.get("AjaxResults") or []
+                for ar in ajax_results:
+                    if isinstance(ar, dict) and ar.get("Action") == "Redirect":
+                        raise PsegAuthError("Session expired during history backfill: Redirected to login")
+                _LOGGER.warning("No chart data returned for range %s to %s", chunk_start_str, chunk_end_str)
+            else:
+                series_list = chart_data.get("series", [])
+                meter_series = {}
+                for s in series_list:
+                    if "Meter" in str(s.get("name") or ""):
+                        meter_series = s
+                        break
+
+                pts = meter_series.get("data", [])
+                for pt in pts:
+                    if isinstance(pt, dict):
+                        kwh = round(pt.get("y", 0.0), 2)
+                        hs = pt.get("hs", {})
+                        p_start = hs.get("start", "")
+                        try:
+                            dt = datetime.strptime(p_start, "%m/%d/%Y")
+                            date_iso = dt.strftime("%Y-%m-%d")
+                        except Exception:
+                            date_iso = p_start
+
+                        est_cost = round(kwh * 0.247, 2)
+                        records_map[date_iso] = {
+                            "date": date_iso,
+                            "kwh": kwh,
+                            "cost": est_cost,
+                        }
+
+            curr_start = curr_end + timedelta(days=1)
+            if curr_start <= end_dt:
+                time.sleep(0.75)
+
+        sorted_records = [records_map[d] for d in sorted(records_map.keys())]
+        _LOGGER.info(
+            "Fetched %d historical records across range %s to %s",
+            len(sorted_records),
+            start_date_str,
+            end_date_str,
+        )
+        return sorted_records
+
+    def fetch_energy_data(self, days_back: int = 14) -> Dict[str, Any]:
+        """Fetch usage and temperature data using the 3-step MyMeter chart sequence."""
+        token = self._get_verification_token()
 
         # Step 2: POST /Dashboard/Chart -> Set date range and daily granularity
         end_dt = datetime.now()

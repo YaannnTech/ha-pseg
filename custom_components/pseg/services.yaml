@@ -1,0 +1,16 @@
+backfill_history:
+  name: Backfill Energy History
+  description: Fetches historical daily energy consumption and cost from the PSE&G portal and imports them into Home Assistant Long-Term Statistics.
+  fields:
+    start_date:
+      name: Start Date
+      description: The starting date to backfill from (YYYY-MM-DD). Defaults to 2 years ago if left empty.
+      example: "2024-10-19"
+      selector:
+        date:
+    end_date:
+      name: End Date
+      description: The ending date to backfill to (YYYY-MM-DD). Defaults to today if left empty.
+      example: "2026-10-19"
+      selector:
+        date:

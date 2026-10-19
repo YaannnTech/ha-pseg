@@ -174,7 +174,6 @@ class PsegElectricityConsumptionSensor(PsegBaseSensor):
 
     _attr_name = "Electricity Consumption"
     _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:lightning-bolt"
 
