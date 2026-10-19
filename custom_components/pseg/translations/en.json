@@ -22,6 +22,14 @@
           "cookie": "Browser Session Cookie"
         }
       },
+      "reconfigure": {
+        "title": "Reconfigure PSE&G",
+        "description": "Select how you would like to update your PSE&G connection:",
+        "menu_options": {
+          "reauth_confirm": "Automated Sign-In (Credentials & MFA)",
+          "cookie": "Browser Session Cookie"
+        }
+      },
       "reauth_confirm": {
         "title": "Re-authenticate PSE&G",
         "description": "Please verify your credentials and MFA method to re-authenticate account {username}.",
@@ -58,7 +66,8 @@
     },
     "abort": {
       "already_configured": "This PSE&G account is already configured.",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "Reconfiguration was successful."
     }
   },
   "issues": {

@@ -8,6 +8,7 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
@@ -29,13 +30,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     icon_path = component_path / "icon.png"
     logo_path = component_path / "logo.png"
 
-    static_paths = []
-    if frontend_path.exists():
-        static_paths.append(("/pseg/pseg-energy-card.js", str(frontend_path)))
-    if icon_path.exists():
-        static_paths.append(("/pseg/icon.png", str(icon_path)))
-    if logo_path.exists():
-        static_paths.append(("/pseg/logo.png", str(logo_path)))
+    def _get_static_paths() -> list[tuple[str, str]]:
+        paths = []
+        if frontend_path.exists():
+            paths.append(("/pseg/pseg-energy-card.js", str(frontend_path)))
+        if icon_path.exists():
+            paths.append(("/pseg/icon.png", str(icon_path)))
+        if logo_path.exists():
+            paths.append(("/pseg/logo.png", str(logo_path)))
+        return paths
+
+    static_paths = await hass.async_add_executor_job(_get_static_paths)
 
     if static_paths:
         try:

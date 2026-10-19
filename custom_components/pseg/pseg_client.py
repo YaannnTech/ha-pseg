@@ -125,7 +125,7 @@ class PsegClient:
             ajax_results = data.get("AjaxResults") or []
             for ar in ajax_results:
                 if isinstance(ar, dict) and ar.get("Action") == "Redirect":
-                    raise PsegAuthError(f"Session expired: MyMeter requested redirect to {ar.get('Value')}")
+                    raise PsegAuthError("Session expired: Redirected to login portal")
             raise PsegAuthError("No chart data returned from MyMeter. Session may have expired.")
 
         series_list = chart_data.get("series", [])

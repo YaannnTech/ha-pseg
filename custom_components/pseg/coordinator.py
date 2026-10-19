@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -123,14 +124,14 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     candidate_urls.append(fallback)
 
             if username and password:
+                session = async_get_clientsession(self.hass)
                 for auth_url in candidate_urls:
                     try:
-                        async with aiohttp.ClientSession() as session:
-                            async with session.post(
-                                f"{auth_url}/login",
-                                json={"username": username, "password": password},
-                                timeout=aiohttp.ClientTimeout(total=90),
-                            ) as resp:
+                        async with session.post(
+                            f"{auth_url}/login",
+                            json={"username": username, "password": password},
+                            timeout=aiohttp.ClientTimeout(total=90),
+                        ) as resp:
                                 if resp.status == 200:
                                     res_json = await resp.json()
                                     if res_json.get("success") and res_json.get("cookies"):
@@ -165,7 +166,7 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             self.status = "auth_required"
             self._raise_auth_issues(str(err))
             raise ConfigEntryAuthFailed(
-                f"Session expired or MFA required. Please re-authenticate under Settings > Devices & Services > PSE&G: {err}"
+                "Session expired or MFA required. Please re-authenticate under Settings > Devices & Services > PSE&G."
             ) from err
         except Exception as err:
             self.status = "error"
