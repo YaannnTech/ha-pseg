@@ -65,7 +65,7 @@
       "recaptcha_blocked": "Google reCAPTCHA has throttled automated audio challenge solving. Please choose 'Browser Session Cookie' from the re-authentication menu, or try again later.",
       "auth_server_error": "The automated login helper encountered an error on port 8000. Please try again or use the session cookie option.",
       "invalid_cookie": "The session cookie provided was rejected or has expired.",
-      "auth_server_unavailable": "The PSE&G Auth Companion Add-on is not running (port 8000 unreachable). Please install and start the add-on from https://github.com/sidprax/ha-pseg-auth-addon to use automated OTP login, or choose 'Browser Session Cookie' from the menu.",
+      "auth_server_unavailable": "The PSE&G Auth Companion Add-on is not running (port 8000 unreachable). Please install and start the companion add-on under Settings > Add-ons to use automated OTP login, or choose 'Browser Session Cookie' from the menu.",
       "invalid_code": "The verification code entered is invalid or expired.",
       "unknown": "An unexpected error occurred while communicating with PSE&G."
     },
