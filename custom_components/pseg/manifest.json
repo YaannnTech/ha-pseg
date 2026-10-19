@@ -1,10 +1,10 @@
 {
   "domain": "pseg",
   "name": "PSE&G Energy (New Jersey)",
+  "after_dependencies": ["recorder"],
   "codeowners": ["@sidprax"],
   "config_flow": true,
   "dependencies": ["http"],
-  "after_dependencies": ["recorder"],
   "documentation": "https://github.com/sidprax/ha-pseg",
   "integration_type": "service",
   "iot_class": "cloud_polling",
