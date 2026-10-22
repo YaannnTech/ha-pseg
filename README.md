@@ -80,15 +80,15 @@ If you wish to use automated username/password sign-in with SMS or Email OTP:
 
 ## Home Assistant Energy Dashboard
 
-The integration natively records Long-Term Statistics (LTS) for both electricity consumption and cost:
+The integration natively publishes official Home Assistant External Statistics for both electricity consumption and cost:
 
 1. In Home Assistant, navigate to **Settings** > **Dashboards** > **Energy**.
 2. Under **Electricity Grid**, click **Add Consumption**.
-3. Select `sensor.pseg_electricity_consumption` (**PSE&G Electricity Consumption**).
-4. Check **Use an existing entity with total energy costs** and select `sensor.pseg_electricity_cost` (**PSE&G Electricity Cost**).
+3. In the statistic dropdown, select **PSE&G Electricity Consumption** (`pseg:electricity_consumption`).
+4. Select **Track costs for this energy consumption** > **Use an entity with total energy costs** and select **PSE&G Electricity Cost** (`pseg:electricity_cost`).
 5. Click **Save**.
 
-The Energy Dashboard will automatically reflect daily consumption and costs as new meter data is retrieved.
+The Energy Dashboard will automatically display your electric usage and actual billing costs with hourly resolution for recent days and daily trends across the full backfill range.
 
 ## Historical Backfill
 

@@ -163,7 +163,7 @@ class PsegClient:
                 pts = meter_series.get("data", [])
                 for pt in pts:
                     if isinstance(pt, dict):
-                        kwh = round(pt.get("y", 0.0), 2)
+                        kwh = round(pt.get("y", 0.0), 4)
                         hs = pt.get("hs", {})
                         p_start = hs.get("start", "")
                         try:
@@ -172,9 +172,12 @@ class PsegClient:
                         except Exception:
                             date_iso = p_start
 
-                        est_cost = round(kwh * 0.247, 2)
+                        x = pt.get("x", 0)
+                        start_utc = datetime.fromtimestamp(x / 1000, tz=timezone.utc) if x else None
+                        est_cost = round(kwh * 0.247, 4)
                         records_map[date_iso] = {
                             "date": date_iso,
+                            "start": start_utc,
                             "kwh": kwh,
                             "cost": est_cost,
                         }
@@ -196,12 +199,12 @@ class PsegClient:
         """Fetch usage and temperature data using the 3-step MyMeter chart sequence."""
         token = self._get_verification_token()
 
-        # Step 2: POST /Dashboard/Chart -> Set date range and daily granularity
+        # Step 2: POST /Dashboard/Chart -> Set date range and hourly granularity
         end_dt = datetime.now()
         start_dt = end_dt - timedelta(days=days_back)
         chart_setup_data = {
             "__RequestVerificationToken": token,
-            "UsageInterval": "6",  # 6 = Daily
+            "UsageInterval": "5",  # 5 = Hourly
             "UsageType": "1",  # 1 = Consumption
             "jsTargetName": "StorageType",
             "EnableHoverChart": "true",
@@ -268,26 +271,36 @@ class PsegClient:
         detailed_pts = meter_series.get("data", [])
         temp_pts = temp_series.get("data", [])
 
-        history_14d = []
+        hourly_records = []
+        daily_map: dict[str, dict[str, Any]] = {}
+
         for pt in detailed_pts:
             if isinstance(pt, dict):
-                kwh = round(pt.get("y", 0.0), 2)
+                x = pt.get("x", 0)
+                start_utc = datetime.fromtimestamp(x / 1000, tz=timezone.utc)
+                kwh = round(pt.get("y", 0.0), 4)
+                cost = round(kwh * 0.247, 4)
+
+                hourly_records.append({
+                    "start": start_utc,
+                    "date": start_utc.strftime("%Y-%m-%d"),
+                    "kwh": kwh,
+                    "cost": cost,
+                })
+
                 hs = pt.get("hs", {})
                 start_str = hs.get("start", "")
                 try:
-                    dt = datetime.strptime(start_str, "%m/%d/%Y")
-                    date_iso = dt.strftime("%Y-%m-%d")
+                    date_iso = datetime.strptime(start_str, "%m/%d/%Y").strftime("%Y-%m-%d")
                 except Exception:
-                    date_iso = start_str
+                    date_iso = start_utc.strftime("%Y-%m-%d")
 
-                # Estimate cost based on standard NJ tariff (~$0.247/kWh)
-                est_cost = round(kwh * 0.247, 2)
-                history_14d.append({
-                    "date": date_iso,
-                    "kwh": kwh,
-                    "cost": est_cost,
-                })
+                if date_iso not in daily_map:
+                    daily_map[date_iso] = {"date": date_iso, "kwh": 0.0, "cost": 0.0}
+                daily_map[date_iso]["kwh"] = round(daily_map[date_iso]["kwh"] + kwh, 2)
+                daily_map[date_iso]["cost"] = round(daily_map[date_iso]["cost"] + cost, 2)
 
+        history_14d = sorted(daily_map.values(), key=lambda x: x["date"])
         latest_record = history_14d[-1] if history_14d else {"date": "None", "kwh": 0.0, "cost": 0.0}
         prev_record = history_14d[-2] if len(history_14d) > 1 else {"date": "None", "kwh": 0.0, "cost": 0.0}
 
@@ -304,6 +317,7 @@ class PsegClient:
             "previous_kwh": prev_record["kwh"],
             "previous_cost": prev_record["cost"],
             "history_14d": history_14d,
+            "hourly_records": hourly_records,
             "temperature_range": temp_range,
             "temperature_avg": round(latest_temp.get("y", 0.0), 1) if "y" in latest_temp else None,
             "total_records": len(nav_series),

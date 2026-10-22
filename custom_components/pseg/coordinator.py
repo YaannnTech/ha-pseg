@@ -16,7 +16,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
-    async_import_statistics,
+    async_add_external_statistics,
     get_last_statistics,
 )
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -115,9 +115,10 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             data = await self.hass.async_add_executor_job(
                 self.client.fetch_energy_data, 14
             )
-            if "history_14d" in data and data["history_14d"]:
+            records = data.get("hourly_records") or data.get("history_14d")
+            if records:
                 try:
-                    await self.async_record_statistics(data["history_14d"])
+                    await self.async_record_statistics(records, is_backfill=False)
                 except Exception as stat_err:
                     _LOGGER.warning("Could not record statistics into LTS: %s", stat_err)
             self.next_update_time = dt_util.utcnow() + self.update_interval
@@ -168,9 +169,10 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                         data = await self.hass.async_add_executor_job(
                                             self.client.fetch_energy_data, 14
                                         )
-                                        if "history_14d" in data and data["history_14d"]:
+                                        records = data.get("hourly_records") or data.get("history_14d")
+                                        if records:
                                             try:
-                                                await self.async_record_statistics(data["history_14d"])
+                                                await self.async_record_statistics(records, is_backfill=False)
                                             except Exception as stat_err:
                                                 _LOGGER.warning("Could not record statistics into LTS: %s", stat_err)
                                         self.next_update_time = dt_util.utcnow() + self.update_interval
@@ -203,13 +205,44 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             self.status = "error"
             raise UpdateFailed(f"Error communicating with PSE&G: {err}") from err
 
-    async def async_record_statistics(self, records: list[dict[str, Any]]) -> None:
-        """Import daily energy consumption and cost records into Home Assistant long-term statistics."""
+    async def async_record_statistics(
+        self,
+        records: list[dict[str, Any]],
+        is_backfill: bool = False,
+    ) -> None:
+        """Import energy consumption and cost records into Home Assistant external long-term statistics."""
         if not records:
             return
 
-        sorted_records = sorted(records, key=lambda x: x["date"])
         tz = dt_util.get_time_zone(self.hass.config.time_zone)
+
+        # Normalize records to UTC start datetime and float values
+        normalized_records = []
+        for r in records:
+            start_dt = None
+            if "start" in r and r["start"]:
+                if isinstance(r["start"], datetime):
+                    start_dt = dt_util.as_utc(r["start"])
+                elif isinstance(r["start"], (int, float)):
+                    start_dt = datetime.fromtimestamp(r["start"], tz=dt_util.UTC)
+            elif "date" in r and r["date"]:
+                local_dt = datetime.strptime(r["date"], "%Y-%m-%d").replace(tzinfo=tz)
+                start_dt = dt_util.as_utc(local_dt)
+
+            if not start_dt:
+                continue
+
+            kwh = float(r.get("kwh") or 0.0)
+            cost = float(r.get("cost") or 0.0)
+            normalized_records.append({"start": start_dt, "kwh": kwh, "cost": cost})
+
+        if not normalized_records:
+            return
+
+        sorted_records = sorted(normalized_records, key=lambda x: x["start"])
+
+        consumption_id = f"{DOMAIN}:electricity_consumption"
+        cost_id = f"{DOMAIN}:electricity_cost"
 
         consumption_meta: StatisticMetaData = {
             "has_mean": False,
@@ -217,8 +250,8 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             "mean_type": 0,
             "unit_class": "energy",
             "name": "PSE&G Electricity Consumption",
-            "source": "recorder",
-            "statistic_id": "sensor.pseg_electricity_consumption",
+            "source": DOMAIN,
+            "statistic_id": consumption_id,
             "unit_of_measurement": "kWh",
         }
 
@@ -228,41 +261,33 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             "mean_type": 0,
             "unit_class": None,
             "name": "PSE&G Electricity Cost",
-            "source": "recorder",
-            "statistic_id": "sensor.pseg_electricity_cost",
+            "source": DOMAIN,
+            "statistic_id": cost_id,
             "unit_of_measurement": "USD",
         }
 
-        # Check existing statistics baseline before the first record's start timestamp
-        first_date_str = sorted_records[0]["date"]
-        first_local_dt = datetime.strptime(first_date_str, "%Y-%m-%d").replace(tzinfo=tz)
-        first_start_utc = dt_util.as_utc(first_local_dt)
-
+        # Check existing external statistics in Home Assistant
+        last_stat_start_dt: Optional[datetime] = None
         last_consumption_sum = 0.0
         last_cost_sum = 0.0
-        has_prior_stat = False
 
         try:
             last_stats = await get_instance(self.hass).async_add_executor_job(
                 get_last_statistics,
                 self.hass,
                 1,
-                "sensor.pseg_electricity_consumption",
+                consumption_id,
                 True,
                 {"sum", "start"},
             )
-            if "sensor.pseg_electricity_consumption" in last_stats:
-                stat_list = last_stats["sensor.pseg_electricity_consumption"]
-                if stat_list:
-                    last_stat = stat_list[0]
-                    stat_start = last_stat.get("start")
-                    if isinstance(stat_start, (int, float)):
-                        stat_start_dt = datetime.fromtimestamp(stat_start, tz=dt_util.UTC)
-                    else:
-                        stat_start_dt = stat_start
-                    if stat_start_dt and stat_start_dt < first_start_utc:
-                        last_consumption_sum = float(last_stat.get("sum") or 0.0)
-                        has_prior_stat = True
+            if consumption_id in last_stats and last_stats[consumption_id]:
+                last_stat = last_stats[consumption_id][0]
+                stat_start = last_stat.get("start")
+                if isinstance(stat_start, (int, float)):
+                    last_stat_start_dt = datetime.fromtimestamp(stat_start, tz=dt_util.UTC)
+                elif isinstance(stat_start, datetime):
+                    last_stat_start_dt = dt_util.as_utc(stat_start)
+                last_consumption_sum = float(last_stat.get("sum") or 0.0)
         except Exception as err:
             _LOGGER.debug("Could not query last consumption statistic: %s", err)
 
@@ -271,55 +296,60 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 get_last_statistics,
                 self.hass,
                 1,
-                "sensor.pseg_electricity_cost",
+                cost_id,
                 True,
                 {"sum", "start"},
             )
-            if "sensor.pseg_electricity_cost" in last_cost_stats:
-                stat_list = last_cost_stats["sensor.pseg_electricity_cost"]
-                if stat_list:
-                    last_stat = stat_list[0]
-                    stat_start = last_stat.get("start")
-                    if isinstance(stat_start, (int, float)):
-                        stat_start_dt = datetime.fromtimestamp(stat_start, tz=dt_util.UTC)
-                    else:
-                        stat_start_dt = stat_start
-                    if stat_start_dt and stat_start_dt < first_start_utc:
-                        last_cost_sum = float(last_stat.get("sum") or 0.0)
+            if cost_id in last_cost_stats and last_cost_stats[cost_id]:
+                last_cost_stat = last_cost_stats[cost_id][0]
+                last_cost_sum = float(last_cost_stat.get("sum") or 0.0)
         except Exception as err:
             _LOGGER.debug("Could not query last cost statistic: %s", err)
 
         consumption_stats: list[StatisticData] = []
         cost_stats: list[StatisticData] = []
 
-        # If no prior statistic exists before this batch, prepend baseline point for Day 0 delta
-        if not has_prior_stat:
-            baseline_dt = first_start_utc - timedelta(days=1)
+        if is_backfill or last_stat_start_dt is None:
+            # Full backfill or fresh initialization
+            first_start = sorted_records[0]["start"]
+            step = timedelta(hours=1)
+            if len(sorted_records) > 1:
+                diff = sorted_records[1]["start"] - sorted_records[0]["start"]
+                if diff >= timedelta(days=1):
+                    step = timedelta(days=1)
+
+            baseline_dt = first_start - step
             consumption_stats.append(
                 StatisticData(
                     start=baseline_dt,
                     state=0.0,
-                    sum=round(last_consumption_sum, 2),
+                    sum=0.0,
                 )
             )
             cost_stats.append(
                 StatisticData(
                     start=baseline_dt,
                     state=0.0,
-                    sum=round(last_cost_sum, 2),
+                    sum=0.0,
                 )
             )
+            running_consumption = 0.0
+            running_cost = 0.0
+            records_to_process = sorted_records
+        else:
+            # Incremental append: strictly process records newer than the latest recorded statistic
+            records_to_process = [r for r in sorted_records if r["start"] > last_stat_start_dt]
+            running_consumption = last_consumption_sum
+            running_cost = last_cost_sum
 
-        running_consumption = last_consumption_sum
-        running_cost = last_cost_sum
+        if not records_to_process and len(consumption_stats) <= 1:
+            _LOGGER.debug("No new statistics to record (all records <= %s)", last_stat_start_dt)
+            return
 
-        for r in sorted_records:
-            date_str = r["date"]
-            kwh = float(r.get("kwh") or 0.0)
-            cost = float(r.get("cost") or 0.0)
-
-            local_dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tz)
-            start_utc = dt_util.as_utc(local_dt)
+        for r in records_to_process:
+            start_utc = r["start"]
+            kwh = r["kwh"]
+            cost = r["cost"]
 
             running_consumption += kwh
             running_cost += cost
@@ -328,24 +358,26 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 StatisticData(
                     start=start_utc,
                     state=kwh,
-                    sum=round(running_consumption, 2),
+                    sum=round(running_consumption, 4),
                 )
             )
             cost_stats.append(
                 StatisticData(
                     start=start_utc,
                     state=cost,
-                    sum=round(running_cost, 2),
+                    sum=round(running_cost, 4),
                 )
             )
 
-        async_import_statistics(self.hass, consumption_meta, consumption_stats)
-        async_import_statistics(self.hass, cost_meta, cost_stats)
+        async_add_external_statistics(self.hass, consumption_meta, consumption_stats)
+        async_add_external_statistics(self.hass, cost_meta, cost_stats)
         _LOGGER.info(
-            "Imported %d daily statistics into LTS (range: %s to %s)",
-            len(sorted_records),
-            sorted_records[0]["date"],
-            sorted_records[-1]["date"],
+            "Added %d external statistics into LTS for %s and %s (%s to %s)",
+            len(consumption_stats),
+            consumption_id,
+            cost_id,
+            consumption_stats[0]["start"].isoformat(),
+            consumption_stats[-1]["start"].isoformat(),
         )
 
     async def async_backfill_history(
@@ -387,7 +419,7 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             _LOGGER.warning("No historical records returned from PSE&G for %s to %s", start_date_str, end_date_str)
             return 0
 
-        await self.async_record_statistics(records)
+        await self.async_record_statistics(records, is_backfill=True)
 
         # Update coordinator state if backfill includes latest readings
         latest_record = records[-1]

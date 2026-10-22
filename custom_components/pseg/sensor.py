@@ -174,6 +174,7 @@ class PsegElectricityConsumptionSensor(PsegBaseSensor):
 
     _attr_name = "Electricity Consumption"
     _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = None
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:lightning-bolt"
 
@@ -197,7 +198,10 @@ class PsegElectricityConsumptionSensor(PsegBaseSensor):
         """Return full history and context attributes for the custom card."""
         attrs = {}
         if self._restored_state and self._restored_state.attributes:
-            attrs.update(self._restored_state.attributes)
+            attrs.update({
+                k: v for k, v in self._restored_state.attributes.items()
+                if k not in ("state_class", "device_class", "unit_of_measurement", "icon", "friendly_name")
+            })
         if self._data:
             attrs.update({
                 ATTR_METER: self._data.get("meter"),
@@ -221,6 +225,7 @@ class PsegElectricityCostSensor(PsegBaseSensor):
 
     _attr_name = "Electricity Cost"
     _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = None
     _attr_native_unit_of_measurement = "USD"
     _attr_icon = "mdi:currency-usd"
 
