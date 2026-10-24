@@ -121,7 +121,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload PSE&G config entry when options are updated."""
+    """Reload PSE&G config entry only when options are updated."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator and coordinator.current_options == entry.options:
+        return
+    if coordinator:
+        coordinator.current_options = dict(entry.options)
     await hass.config_entries.async_reload(entry.entry_id)
 
 
