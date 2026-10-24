@@ -59,17 +59,23 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self.status: str = "connected"
         self.last_successful_update: Optional[str] = None
 
-        # Resolve electric rate from options or entry data
-        rate_val = DEFAULT_ELECTRIC_RATE
+        # Resolve optional user-configured rate override (None enables auto-derived 7-day average)
+        user_rate = None
         if config_entry and config_entry.options.get(CONF_ELECTRIC_RATE) is not None:
-            rate_val = config_entry.options.get(CONF_ELECTRIC_RATE)
+            user_rate = config_entry.options.get(CONF_ELECTRIC_RATE)
         elif entry_data.get(CONF_ELECTRIC_RATE) is not None:
-            rate_val = entry_data.get(CONF_ELECTRIC_RATE)
+            user_rate = entry_data.get(CONF_ELECTRIC_RATE)
+
         try:
-            self.electric_rate = float(rate_val)
+            self.user_configured_rate = float(user_rate) if user_rate is not None and float(user_rate) > 0 else None
         except (ValueError, TypeError):
-            self.electric_rate = DEFAULT_ELECTRIC_RATE
-        self.client.electric_rate = self.electric_rate
+            self.user_configured_rate = None
+
+        self.client.user_configured_rate = self.user_configured_rate
+        self.effective_rate = self.user_configured_rate or DEFAULT_ELECTRIC_RATE
+        self.rate_source = "user_configured" if self.user_configured_rate else "default"
+        self.rate_7d_avg: Optional[float] = None
+        self.days_used_for_rate: int = 0
 
         super().__init__(
             hass,
@@ -77,6 +83,11 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             name=DOMAIN,
             update_interval=timedelta(hours=DEFAULT_SCAN_INTERVAL_HOURS),
         )
+
+    @property
+    def electric_rate(self) -> float:
+        """Return effective rate for backwards compatibility."""
+        return self.effective_rate
 
     def _dismiss_auth_issues(self) -> None:
         """Dismiss persistent notification and repairs issue once authenticated."""
@@ -140,6 +151,10 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             data["next_update"] = self.next_update_time.isoformat()
             self._last_valid_data = data
             self.last_successful_update = dt_util.utcnow().isoformat()
+            self.effective_rate = data.get("effective_rate", self.effective_rate)
+            self.rate_source = data.get("rate_source", self.rate_source)
+            self.rate_7d_avg = data.get("rate_7d_avg")
+            self.days_used_for_rate = data.get("days_used_for_rate", 0)
             self.auth_required = False
             self.status = "connected"
             self._dismiss_auth_issues()

@@ -22,13 +22,18 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ATTR_DAYS_USED_FOR_RATE,
     ATTR_HISTORY_14D,
+    ATTR_IS_EXACT_PORTAL_COST,
     ATTR_LATEST_COST,
     ATTR_LATEST_DATE,
     ATTR_METER,
     ATTR_PREVIOUS_COST,
     ATTR_PREVIOUS_DATE,
     ATTR_PREVIOUS_KWH,
+    ATTR_RATE_7D_AVG,
+    ATTR_RATE_APPLIED,
+    ATTR_RATE_SOURCE,
     ATTR_TEMPERATURE_AVG,
     ATTR_TEMPERATURE_HIGH,
     ATTR_TEMPERATURE_LOW,
@@ -210,6 +215,10 @@ class PsegElectricityConsumptionSensor(PsegBaseSensor):
                 ATTR_PREVIOUS_KWH: self._data.get("previous_kwh"),
                 ATTR_PREVIOUS_COST: self._data.get("previous_cost"),
                 ATTR_LATEST_COST: self._data.get("latest_cost"),
+                ATTR_RATE_APPLIED: self.coordinator.effective_rate,
+                ATTR_RATE_SOURCE: self.coordinator.rate_source,
+                ATTR_RATE_7D_AVG: self.coordinator.rate_7d_avg,
+                ATTR_DAYS_USED_FOR_RATE: self.coordinator.days_used_for_rate,
                 ATTR_HISTORY_14D: self._data.get("history_14d", []),
                 "last_updated": self._data.get("last_updated"),
                 "temperature_range": self._data.get("temperature_range"),
@@ -221,9 +230,9 @@ class PsegElectricityConsumptionSensor(PsegBaseSensor):
 
 
 class PsegElectricityCostSensor(PsegBaseSensor):
-    """Sensor for estimated electricity cost in USD."""
+    """Sensor for electricity cost in USD."""
 
-    _attr_name = "Estimated Electricity Cost"
+    _attr_name = "Electricity Cost"
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = None
     _attr_native_unit_of_measurement = "USD"
@@ -234,7 +243,7 @@ class PsegElectricityCostSensor(PsegBaseSensor):
 
     @property
     def native_value(self) -> Optional[float]:
-        """Return the estimated cost in dollars."""
+        """Return the cost in dollars."""
         if self._data and "latest_cost" in self._data:
             return self._data.get("latest_cost")
         if self._restored_state:
@@ -247,9 +256,21 @@ class PsegElectricityCostSensor(PsegBaseSensor):
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return extra state attributes."""
-        attrs = super().extra_state_attributes
-        attrs["estimated"] = True
-        attrs["rate_applied"] = self.coordinator.electric_rate
+        attrs: Dict[str, Any] = {}
+        if self._restored_state and self._restored_state.attributes:
+            attrs.update({
+                k: v for k, v in self._restored_state.attributes.items()
+                if k not in ("state_class", "device_class", "unit_of_measurement", "icon", "friendly_name")
+            })
+        is_exact = False
+        if self._data:
+            is_exact = self._data.get("is_exact_latest_cost", False)
+        attrs[ATTR_IS_EXACT_PORTAL_COST] = is_exact
+        attrs["estimated"] = not is_exact
+        attrs[ATTR_RATE_APPLIED] = self.coordinator.effective_rate
+        attrs[ATTR_RATE_SOURCE] = self.coordinator.rate_source
+        attrs[ATTR_RATE_7D_AVG] = self.coordinator.rate_7d_avg
+        attrs[ATTR_DAYS_USED_FOR_RATE] = self.coordinator.days_used_for_rate
         return attrs
 
 

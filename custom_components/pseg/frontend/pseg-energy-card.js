@@ -121,11 +121,12 @@ class PsegEnergyCard extends HTMLElement {
   }
 
   // Format value for bar labels (never show $ sign in bars)
-  formatBarVal(kwh, isDollars, rate) {
+  formatBarVal(item, isDollars, rate) {
     if (isDollars) {
-      const d = kwh * rate;
+      const d = (item && item.cost != null && item.cost > 0) ? item.cost : (((item && item.kwh) || 0) * rate);
       return d < 10 ? d.toFixed(1) : `${Math.round(d)}`;
     }
+    const kwh = (item && item.kwh != null) ? item.kwh : 0;
     return kwh < 10 ? kwh.toFixed(1) : `${Math.round(kwh)}`;
   }
 
@@ -225,10 +226,12 @@ class PsegEnergyCard extends HTMLElement {
       daysToShow = this._hass.states[rangeToggleEnt].state === "on" ? 14 : 7;
     }
 
-    // Derive estimated electric rate from entity attributes or user config
+    // Derive electric rate from entity attributes or user config
     let defaultRate = 0.247;
     if (entity.attributes.rate_applied != null && !isNaN(parseFloat(entity.attributes.rate_applied))) {
       defaultRate = parseFloat(entity.attributes.rate_applied);
+    } else if (entity.attributes.rate_7d_avg != null && !isNaN(parseFloat(entity.attributes.rate_7d_avg))) {
+      defaultRate = parseFloat(entity.attributes.rate_7d_avg);
     } else {
       const latestKwhVal = parseFloat(entity.attributes.latest_kwh) || parseFloat(entity.state) || 0;
       const latestCostVal = parseFloat(entity.attributes.latest_cost) || 0;
@@ -239,6 +242,19 @@ class PsegEnergyCard extends HTMLElement {
     const rate = (this.config.cost_per_kwh != null && !isNaN(parseFloat(this.config.cost_per_kwh)))
       ? parseFloat(this.config.cost_per_kwh)
       : defaultRate;
+
+    const rateSource = entity.attributes.rate_source || "derived";
+    const daysUsedForRate = parseInt(entity.attributes.days_used_for_rate, 10) || 0;
+    let rateTooltip = `$${rate.toFixed(3)}/kWh`;
+    if (this.config.cost_per_kwh != null) {
+      rateTooltip += " (Card config override)";
+    } else if (rateSource === "user_configured") {
+      rateTooltip += " (Integration options override)";
+    } else if (rateSource === "derived_7d_average") {
+      rateTooltip += ` (7-day weighted average from ${daysUsedForRate} qualifying days of portal billing)`;
+    } else {
+      rateTooltip += " (Default estimate)";
+    }
 
     const cycleDays = parseInt(this.config.cycle_days) || 30;
     const hasLastCycle = this.config.last_cycle_kwh != null && !isNaN(parseFloat(this.config.last_cycle_kwh));
@@ -258,7 +274,11 @@ class PsegEnergyCard extends HTMLElement {
     const historyMap = new Map();
     rawHistory.forEach(item => {
       if (item && item.date) {
-        historyMap.set(item.date, parseFloat(item.kwh) || 0);
+        historyMap.set(item.date, {
+          kwh: parseFloat(item.kwh) || 0,
+          cost: item.cost != null ? parseFloat(item.cost) : null,
+          isExactCost: !!item.is_exact_cost
+        });
       }
     });
 
@@ -283,10 +303,15 @@ class PsegEnergyCard extends HTMLElement {
     for (let i = daysToShow - 1; i >= 0; i--) {
       const cur = new Date(endDt.getTime() - i * 86400000);
       const iso = cur.toISOString().slice(0, 10);
-      const val = historyMap.has(iso) ? historyMap.get(iso) : null;
+      const itemData = historyMap.get(iso);
+      const val = itemData ? itemData.kwh : null;
+      const costVal = itemData ? itemData.cost : null;
+      const isExactCost = itemData ? itemData.isExactCost : false;
       activeData.push({
         date: iso,
         kwh: val,
+        cost: costVal,
+        isExactCost: isExactCost,
         isMissing: val === null
       });
     }
@@ -353,8 +378,10 @@ class PsegEnergyCard extends HTMLElement {
     }
 
     // Single-unit string representations for header mini stats
-    const latestDisplay = this.formatPrecision(latestKwh, isDollars, rate);
-    const avgDisplay = this.formatPrecision(avgKwh, isDollars, rate);
+    const latestCost = parseFloat(entity.attributes.latest_cost) || (latestKwh * rate);
+    const latestDisplay = isDollars ? latestCost.toFixed(2) : latestKwh.toFixed(2);
+    const avgCost = validPoints.reduce((acc, c) => acc + ((c.cost != null && c.cost > 0) ? c.cost : (c.kwh * rate)), 0) / count;
+    const avgDisplay = isDollars ? avgCost.toFixed(2) : avgKwh.toFixed(2);
     const projDisplay = isDollars
       ? `${Math.round(projKwh * rate)}`
       : `${Math.round(projKwh)}`;
@@ -367,16 +394,18 @@ class PsegEnergyCard extends HTMLElement {
       const kwh = item.kwh !== null ? item.kwh : 0;
       const heightPct = item.isMissing ? 4 : Math.min(Math.max((kwh / maxKwh) * 100, 16), 100);
       const isLatest = idx === activeData.length - 1 && !item.isMissing;
-      const barValText = item.isMissing ? "-" : this.formatBarVal(kwh, isDollars, rate);
+      const barValText = item.isMissing ? "-" : this.formatBarVal(item, isDollars, rate);
       const barBg = item.isMissing ? "rgba(255, 255, 255, 0.12)" : this.getBarColor(kwh, avgKwh);
 
       // Compact date (M/D)
       const dParts = item.date.split("-");
       const dateText = dParts.length === 3 ? `${parseInt(dParts[1])}/${parseInt(dParts[2])}` : item.date;
       const fitsInside = heightPct >= 32;
+      const dayCostText = (item.cost != null && item.cost > 0) ? `$${item.cost.toFixed(2)}` : `$${(kwh * rate).toFixed(2)}`;
+      const barTitle = item.isMissing ? `${item.date}: No Data` : `${item.date}: ${kwh} kWh • ${dayCostText}`;
 
       return `
-        <div class="bar-col ${isLatest ? 'is-latest' : ''} ${item.isMissing ? 'is-missing' : ''}" title="${escapeHtml(item.date)}: ${item.isMissing ? 'No Data' : kwh + ' kWh'}">
+        <div class="bar-col ${isLatest ? 'is-latest' : ''} ${item.isMissing ? 'is-missing' : ''}" title="${escapeHtml(barTitle)}">
           <div class="bar-track">
             <div class="bar-fill" style="height: ${heightPct}%; background: ${barBg};">
               ${!item.isMissing && fitsInside ? `<span class="val-inside">${escapeHtml(barValText)}</span>` : ""}
@@ -665,7 +694,7 @@ class PsegEnergyCard extends HTMLElement {
             </div>
 
             <!-- Rate -->
-            <div class="stat-item">
+            <div class="stat-item" title="${escapeHtml(rateTooltip)}">
               <span class="stat-label">Rate</span>
               <div class="stat-val-row">
                 <span class="stat-val">${rateDisplay}</span>

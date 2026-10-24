@@ -534,23 +534,41 @@ class PsegOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the PSE&G options."""
         if user_input is not None:
+            # If user left rate empty or entered <= 0, normalize to None to enable 7-day average
+            rate = user_input.get(CONF_ELECTRIC_RATE)
+            if rate is not None:
+                try:
+                    if float(rate) <= 0:
+                        user_input[CONF_ELECTRIC_RATE] = None
+                except (ValueError, TypeError):
+                    user_input[CONF_ELECTRIC_RATE] = None
             return self.async_create_entry(title="", data=user_input)
 
         current_rate = self.config_entry.options.get(
             CONF_ELECTRIC_RATE,
-            self.config_entry.data.get(CONF_ELECTRIC_RATE, DEFAULT_ELECTRIC_RATE),
+            self.config_entry.data.get(CONF_ELECTRIC_RATE),
         )
         current_auth_url = self.config_entry.options.get(
             CONF_AUTH_SERVER_URL,
             self.config_entry.data.get(CONF_AUTH_SERVER_URL, DEFAULT_AUTH_SERVER_URL),
         )
 
-        options_schema = vol.Schema(
-            {
-                vol.Required(CONF_ELECTRIC_RATE, default=float(current_rate)): vol.Coerce(float),
-                vol.Required(CONF_AUTH_SERVER_URL, default=str(current_auth_url)): str,
-            }
-        )
+        schema_dict: Dict[Any, Any] = {}
+        if current_rate is not None:
+            try:
+                rate_val = float(current_rate)
+                if rate_val > 0:
+                    schema_dict[vol.Optional(CONF_ELECTRIC_RATE, default=rate_val)] = vol.Coerce(float)
+                else:
+                    schema_dict[vol.Optional(CONF_ELECTRIC_RATE)] = vol.Coerce(float)
+            except (ValueError, TypeError):
+                schema_dict[vol.Optional(CONF_ELECTRIC_RATE)] = vol.Coerce(float)
+        else:
+            schema_dict[vol.Optional(CONF_ELECTRIC_RATE)] = vol.Coerce(float)
+
+        schema_dict[vol.Required(CONF_AUTH_SERVER_URL, default=str(current_auth_url))] = str
+
+        options_schema = vol.Schema(schema_dict)
 
         return self.async_show_form(
             step_id="init",

@@ -80,9 +80,9 @@
     "step": {
       "init": {
         "title": "PSE&G Energy Options",
-        "description": "Configure the estimated electric rate and companion authentication service settings.",
+        "description": "Configure electricity rate override and companion authentication service settings.",
         "data": {
-          "electric_rate": "Estimated Electricity Rate ($/kWh)",
+          "electric_rate": "Custom Electricity Rate ($/kWh, leave empty for auto-derived 7-day average)",
           "auth_server_url": "Companion Auth Server URL"
         }
       }
