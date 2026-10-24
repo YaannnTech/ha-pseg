@@ -1,6 +1,6 @@
 # PSE&G Energy (New Jersey) for Home Assistant
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/default)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/default)
 [![GitHub Release](https://img.shields.io/github/v/release/sidprax/ha-pseg)](https://github.com/sidprax/ha-pseg/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Validate with hassfest](https://github.com/sidprax/ha-pseg/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/sidprax/ha-pseg/actions/workflows/hassfest.yaml)
@@ -55,6 +55,18 @@ If you wish to use automated username/password sign-in with SMS or Email OTP:
 
 #### Via HACS (Recommended)
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=sidprax&repository=ha-pseg&category=integration)
+
+1. In Home Assistant, open **HACS** > **Integrations**.
+2. Click the **+ Explore & Download Repositories** button (or search bar).
+3. Search for **PSE&G Energy (New Jersey)**.
+4. Click **Download**, then restart Home Assistant.
+
+<details>
+<summary><b>Custom Repository Fallback (If not yet visible in search index)</b></summary>
+
+*(It can take up to 8 hours for newly merged default repositories to sync across all HACS instances. If you do not see it in search yet, you can add it directly:)*
+
 1. In Home Assistant, open **HACS** > **Integrations**.
 2. Click the three dots in the top right and select **Custom repositories**.
 3. Add the repository:
@@ -63,6 +75,7 @@ If you wish to use automated username/password sign-in with SMS or Email OTP:
    ```
 4. Set category to **Integration** and click **Add**.
 5. Find **PSE&G Energy (New Jersey)**, click **Download**, and restart Home Assistant.
+</details>
 
 #### Manual Installation
 
