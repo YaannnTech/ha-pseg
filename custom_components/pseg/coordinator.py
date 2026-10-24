@@ -26,13 +26,15 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_AUTH_SERVER_URL,
     CONF_COOKIE,
+    CONF_ELECTRIC_RATE,
     CONF_PASSWORD,
     CONF_USERNAME,
     DEFAULT_AUTH_SERVER_URL,
+    DEFAULT_ELECTRIC_RATE,
     DEFAULT_SCAN_INTERVAL_HOURS,
     DOMAIN,
 )
-from .pseg_client import PsegAuthError, PsegClient
+from .pseg_client import PsegAuthError, PsegClient, PsegConnectionError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +58,19 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self.auth_required: bool = False
         self.status: str = "connected"
         self.last_successful_update: Optional[str] = None
+
+        # Resolve electric rate from options or entry data
+        rate_val = DEFAULT_ELECTRIC_RATE
+        if config_entry and config_entry.options.get(CONF_ELECTRIC_RATE) is not None:
+            rate_val = config_entry.options.get(CONF_ELECTRIC_RATE)
+        elif entry_data.get(CONF_ELECTRIC_RATE) is not None:
+            rate_val = entry_data.get(CONF_ELECTRIC_RATE)
+        try:
+            self.electric_rate = float(rate_val)
+        except (ValueError, TypeError):
+            self.electric_rate = DEFAULT_ELECTRIC_RATE
+        self.client.electric_rate = self.electric_rate
+
         super().__init__(
             hass,
             _LOGGER,
@@ -129,19 +144,28 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             self.status = "connected"
             self._dismiss_auth_issues()
             return data
+        except PsegConnectionError as err:
+            self.status = "error"
+            _LOGGER.warning("Connection error communicating with PSE&G portal: %s", err)
+            raise UpdateFailed(f"Connection error communicating with PSE&G portal: {err}") from err
         except PsegAuthError as err:
             self.auth_required = True
             self.status = "auth_required"
             _LOGGER.warning("Session error: %s. Attempting silent re-authentication...", err)
             username = self.entry_data.get(CONF_USERNAME)
             password = self.entry_data.get(CONF_PASSWORD)
-            configured_url = self.entry_data.get(CONF_AUTH_SERVER_URL, DEFAULT_AUTH_SERVER_URL)
+            configured_url = (
+                (self.config_entry.options.get(CONF_AUTH_SERVER_URL) if self.config_entry else None)
+                or self.entry_data.get(CONF_AUTH_SERVER_URL)
+                or DEFAULT_AUTH_SERVER_URL
+            )
 
-            # Support localhost and host LAN IP for cross-container reachability
+            # Only probe user-configured companion URL (and local loopback alias if local)
             candidate_urls = [configured_url]
-            for fallback in ["http://127.0.0.1:8000", "http://10.0.1.51:8000", "http://10.0.2.52:8000", "http://localhost:8000"]:
-                if fallback not in candidate_urls:
-                    candidate_urls.append(fallback)
+            if "127.0.0.1" in configured_url and "http://localhost:8000" not in candidate_urls:
+                candidate_urls.append("http://localhost:8000")
+            elif "localhost" in configured_url and "http://127.0.0.1:8000" not in candidate_urls:
+                candidate_urls.append("http://127.0.0.1:8000")
 
             addon_connected = False
             if username and password:

@@ -8,10 +8,12 @@ CONF_COOKIE = "cookie"
 CONF_MFA_METHOD = "mfa_method"
 CONF_MFA_CODE = "mfa_code"
 CONF_AUTH_SERVER_URL = "auth_server_url"
+CONF_ELECTRIC_RATE = "electric_rate"
 
 DEFAULT_MFA_METHOD = "sms"
 DEFAULT_SCAN_INTERVAL_HOURS = 4
 DEFAULT_AUTH_SERVER_URL = "http://127.0.0.1:8000"
+DEFAULT_ELECTRIC_RATE = 0.247
 
 MFA_METHOD_SMS = "sms"
 MFA_METHOD_EMAIL = "email"
@@ -22,6 +24,7 @@ ATTR_PREVIOUS_DATE = "previous_date"
 ATTR_PREVIOUS_KWH = "previous_kwh"
 ATTR_PREVIOUS_COST = "previous_cost"
 ATTR_LATEST_COST = "latest_cost"
+ATTR_RATE_APPLIED = "rate_applied"
 ATTR_HISTORY_14D = "history_14d"
 ATTR_TEMPERATURE_HIGH = "temperature_high"
 ATTR_TEMPERATURE_LOW = "temperature_low"

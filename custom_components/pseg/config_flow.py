@@ -10,23 +10,26 @@ import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_AUTH_SERVER_URL,
     CONF_COOKIE,
+    CONF_ELECTRIC_RATE,
     CONF_MFA_CODE,
     CONF_MFA_METHOD,
     CONF_PASSWORD,
     CONF_USERNAME,
     DEFAULT_AUTH_SERVER_URL,
+    DEFAULT_ELECTRIC_RATE,
     DEFAULT_MFA_METHOD,
     DOMAIN,
     MFA_METHOD_EMAIL,
     MFA_METHOD_SMS,
 )
-from .pseg_client import PsegAuthError, PsegClient
+from .pseg_client import PsegAuthError, PsegClient, PsegConnectionError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,7 +53,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         candidate_urls = []
         if cached:
             candidate_urls.append(cached)
-        for url in [DEFAULT_AUTH_SERVER_URL, "http://127.0.0.1:8000", "http://10.0.1.51:8000", "http://10.0.2.52:8000", "http://localhost:8000"]:
+        for url in [DEFAULT_AUTH_SERVER_URL, "http://localhost:8000"]:
             if url not in candidate_urls:
                 candidate_urls.append(url)
 
@@ -168,9 +171,10 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "missing_credentials"
             else:
                 candidate_urls = [auth_url]
-                for fallback in ["http://127.0.0.1:8000", "http://10.0.1.51:8000", "http://10.0.2.52:8000", "http://localhost:8000"]:
-                    if fallback not in candidate_urls:
-                        candidate_urls.append(fallback)
+                if "127.0.0.1" in auth_url and "http://localhost:8000" not in candidate_urls:
+                    candidate_urls.append("http://localhost:8000")
+                elif "localhost" in auth_url and "http://127.0.0.1:8000" not in candidate_urls:
+                    candidate_urls.append("http://127.0.0.1:8000")
 
                 connected = False
                 session = async_get_clientsession(self.hass)
@@ -276,9 +280,10 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "missing_credentials"
             else:
                 candidate_urls = [auth_url]
-                for fallback in ["http://127.0.0.1:8000", "http://10.0.1.51:8000", "http://10.0.2.52:8000", "http://localhost:8000"]:
-                    if fallback not in candidate_urls:
-                        candidate_urls.append(fallback)
+                if "127.0.0.1" in auth_url and "http://localhost:8000" not in candidate_urls:
+                    candidate_urls.append("http://localhost:8000")
+                elif "localhost" in auth_url and "http://127.0.0.1:8000" not in candidate_urls:
+                    candidate_urls.append("http://127.0.0.1:8000")
 
                 connected = False
                 session = async_get_clientsession(self.hass)
@@ -473,6 +478,9 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except PsegAuthError as err:
                     _LOGGER.error("Cookie validation error: %s", err)
                     errors["base"] = "invalid_cookie"
+                except PsegConnectionError as err:
+                    _LOGGER.error("Connection error validating cookie: %s", err)
+                    errors["base"] = "cannot_connect"
                 except Exception as err:
                     _LOGGER.exception("Unexpected error validating cookie: %s", err)
                     errors["base"] = "unknown"
@@ -503,4 +511,48 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="cookie",
             data_schema=schema,
             errors=errors,
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Get the options flow for this handler."""
+        return PsegOptionsFlowHandler(config_entry)
+
+
+class PsegOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for PSE&G Energy."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Manage the PSE&G options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current_rate = self.config_entry.options.get(
+            CONF_ELECTRIC_RATE,
+            self.config_entry.data.get(CONF_ELECTRIC_RATE, DEFAULT_ELECTRIC_RATE),
+        )
+        current_auth_url = self.config_entry.options.get(
+            CONF_AUTH_SERVER_URL,
+            self.config_entry.data.get(CONF_AUTH_SERVER_URL, DEFAULT_AUTH_SERVER_URL),
+        )
+
+        options_schema = vol.Schema(
+            {
+                vol.Required(CONF_ELECTRIC_RATE, default=float(current_rate)): vol.Coerce(float),
+                vol.Required(CONF_AUTH_SERVER_URL, default=str(current_auth_url)): str,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=options_schema,
         )

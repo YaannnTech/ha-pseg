@@ -4,11 +4,11 @@
   "after_dependencies": ["recorder"],
   "codeowners": ["@sidprax"],
   "config_flow": true,
-  "dependencies": ["http"],
+  "dependencies": ["frontend", "http"],
   "documentation": "https://github.com/sidprax/ha-pseg",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/sidprax/ha-pseg/issues",
   "requirements": ["beautifulsoup4>=4.11.0"],
-  "version": "1.0"
+  "version": "1.0.1"
 }

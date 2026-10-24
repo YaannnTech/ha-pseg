@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.components.frontend import add_extra_js_url
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
@@ -48,6 +49,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             configs = [StaticPathConfig(url, path, False) for url, path in static_paths]
             await hass.http.async_register_static_paths(configs)
             _LOGGER.debug("Registered static paths for PSE&G resources")
+            if frontend_path.exists():
+                add_extra_js_url(hass, "/pseg/pseg-energy-card.js")
+                _LOGGER.debug("Registered Lovelace extra JS URL for pseg-energy-card")
         except Exception as err:
             _LOGGER.debug("Could not register static paths: %s", err)
 
@@ -111,8 +115,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(DOMAIN, "backfill_history", async_backfill_service)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     return True
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload PSE&G config entry when options are updated."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

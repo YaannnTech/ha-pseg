@@ -18,6 +18,16 @@
  * - Tapping anywhere opens detailed popup (`#pseg_energy_popup`).
  */
 
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 class PsegEnergyCard extends HTMLElement {
   static getStubConfig() {
     return {
@@ -215,16 +225,20 @@ class PsegEnergyCard extends HTMLElement {
       daysToShow = this._hass.states[rangeToggleEnt].state === "on" ? 14 : 7;
     }
 
-    // Auto-derive effective electric rate from actual entity readings if not explicitly configured
-    let autoRate = 0.247;
-    const latestKwhVal = parseFloat(entity.attributes.latest_kwh) || parseFloat(entity.state) || 0;
-    const latestCostVal = parseFloat(entity.attributes.latest_cost) || 0;
-    if (latestKwhVal > 0 && latestCostVal > 0) {
-      autoRate = parseFloat((latestCostVal / latestKwhVal).toFixed(3));
+    // Derive estimated electric rate from entity attributes or user config
+    let defaultRate = 0.247;
+    if (entity.attributes.rate_applied != null && !isNaN(parseFloat(entity.attributes.rate_applied))) {
+      defaultRate = parseFloat(entity.attributes.rate_applied);
+    } else {
+      const latestKwhVal = parseFloat(entity.attributes.latest_kwh) || parseFloat(entity.state) || 0;
+      const latestCostVal = parseFloat(entity.attributes.latest_cost) || 0;
+      if (latestKwhVal > 0 && latestCostVal > 0) {
+        defaultRate = parseFloat((latestCostVal / latestKwhVal).toFixed(3));
+      }
     }
     const rate = (this.config.cost_per_kwh != null && !isNaN(parseFloat(this.config.cost_per_kwh)))
       ? parseFloat(this.config.cost_per_kwh)
-      : autoRate;
+      : defaultRate;
 
     const cycleDays = parseInt(this.config.cycle_days) || 30;
     const hasLastCycle = this.config.last_cycle_kwh != null && !isNaN(parseFloat(this.config.last_cycle_kwh));
@@ -362,14 +376,14 @@ class PsegEnergyCard extends HTMLElement {
       const fitsInside = heightPct >= 32;
 
       return `
-        <div class="bar-col ${isLatest ? 'is-latest' : ''} ${item.isMissing ? 'is-missing' : ''}" title="${item.date}: ${item.isMissing ? 'No Data' : kwh + ' kWh'}">
+        <div class="bar-col ${isLatest ? 'is-latest' : ''} ${item.isMissing ? 'is-missing' : ''}" title="${escapeHtml(item.date)}: ${item.isMissing ? 'No Data' : kwh + ' kWh'}">
           <div class="bar-track">
             <div class="bar-fill" style="height: ${heightPct}%; background: ${barBg};">
-              ${!item.isMissing && fitsInside ? `<span class="val-inside">${barValText}</span>` : ""}
+              ${!item.isMissing && fitsInside ? `<span class="val-inside">${escapeHtml(barValText)}</span>` : ""}
             </div>
-            ${!item.isMissing && !fitsInside ? `<span class="val-above" style="bottom: ${heightPct + 2}%;">${barValText}</span>` : ""}
+            ${!item.isMissing && !fitsInside ? `<span class="val-above" style="bottom: ${heightPct + 2}%;">${escapeHtml(barValText)}</span>` : ""}
           </div>
-          <span class="bar-date">${dateText}</span>
+          <span class="bar-date">${escapeHtml(dateText)}</span>
         </div>
       `;
     }).join("");
@@ -617,8 +631,8 @@ class PsegEnergyCard extends HTMLElement {
         <!-- Row 1: Left Meta + Right Single-Line Mini Stats -->
         <div class="top-row">
           <div class="meta-col">
-            <span class="meta-date" title="${nextUpdateTooltip || `As of ${asOfDateStr}`}">As of ${asOfDateStr}</span>
-            <span class="meta-meter">${meterText}${nextUpdateInline}</span>
+            <span class="meta-date" title="${escapeHtml(nextUpdateTooltip || `As of ${asOfDateStr}`)}">As of ${escapeHtml(asOfDateStr)}</span>
+            <span class="meta-meter">${escapeHtml(meterText)}${escapeHtml(nextUpdateInline)}</span>
           </div>
 
           <div class="metrics-inline">
@@ -684,7 +698,7 @@ class PsegEnergyCard extends HTMLElement {
       console.error("PSEG Energy Card render error:", err);
       this.shadowRoot.innerHTML = `
         <ha-card style="background: rgba(25, 25, 25, 0.4); backdrop-filter: blur(10px); padding: 14px 18px; border-radius: 18px; color: #ff6b6b; border: 1px solid rgba(255,255,255,0.08); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Roboto, sans-serif; font-size: 13px;">
-          PSE&amp;G Card Error: ${err.message || err}
+          PSE&amp;G Card Error: ${escapeHtml(err.message || String(err))}
         </ha-card>
       `;
     }

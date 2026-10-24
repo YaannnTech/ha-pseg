@@ -14,6 +14,8 @@ from typing import Any, Dict, Optional
 
 import requests
 
+from .const import DEFAULT_ELECTRIC_RATE
+
 _LOGGER = logging.getLogger(__name__)
 
 BASE_URL = "https://mysmartenergy.nj.pseg.com"
@@ -23,11 +25,16 @@ class PsegAuthError(Exception):
     """Exception raised for authentication or session failures."""
 
 
+class PsegConnectionError(Exception):
+    """Exception raised for network or communication failures with PSE&G."""
+
+
 class PsegClient:
     """Client for PSE&G MySmartEnergy."""
 
-    def __init__(self, cookie: str) -> None:
+    def __init__(self, cookie: str, electric_rate: float = DEFAULT_ELECTRIC_RATE) -> None:
         self.cookie = cookie
+        self.electric_rate = float(electric_rate)
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": (
@@ -48,23 +55,29 @@ class PsegClient:
         """Validate whether current session cookie is authorized."""
         try:
             resp = self.session.get(f"{BASE_URL}/Dashboard", allow_redirects=True, timeout=20)
-            if resp.status_code != 200:
+            if resp.status_code in (401, 403):
                 raise PsegAuthError(f"HTTP status {resp.status_code} received from portal")
+            if resp.status_code != 200:
+                raise PsegConnectionError(f"HTTP status {resp.status_code} received from portal")
             if "signin" in resp.url.lower() or "login" in resp.url.lower():
                 raise PsegAuthError("Session cookie expired or rejected by portal")
             return True
         except requests.RequestException as err:
-            raise PsegAuthError(f"Failed to connect to PSE&G: {err}") from err
+            raise PsegConnectionError(f"Failed to connect to PSE&G: {err}") from err
 
     def _get_verification_token(self) -> str:
         """Extract __RequestVerificationToken from the /Dashboard page."""
         try:
             resp = self.session.get(f"{BASE_URL}/Dashboard", timeout=25)
+            if resp.status_code in (401, 403):
+                raise PsegAuthError(f"HTTP status {resp.status_code} received from portal")
+            if resp.status_code != 200:
+                raise PsegConnectionError(f"HTTP status {resp.status_code} received from portal")
             if "signin" in resp.url.lower() or "login" in resp.url.lower():
                 raise PsegAuthError("Session expired: Redirected to login")
             dash_html = resp.text
         except requests.RequestException as err:
-            raise PsegAuthError(f"Network error on Dashboard: {err}") from err
+            raise PsegConnectionError(f"Network error on Dashboard: {err}") from err
 
         token_match = re.search(
             r'name=[\"\']__RequestVerificationToken[\"\'][^>]*value=[\"\']([^\"\']+)[\"\']',
@@ -143,7 +156,9 @@ class PsegClient:
                 resp3.raise_for_status()
                 data = resp3.json()
             except requests.RequestException as err:
-                raise PsegAuthError(f"Failed to retrieve chart chunk ({chunk_start_str} to {chunk_end_str}): {err}") from err
+                raise PsegConnectionError(f"Failed to retrieve chart chunk ({chunk_start_str} to {chunk_end_str}): {err}") from err
+            except json.JSONDecodeError as err:
+                raise PsegConnectionError(f"Invalid JSON returned from chart chunk ({chunk_start_str} to {chunk_end_str}): {err}") from err
 
             chart_data = data.get("Data")
             if not chart_data or not isinstance(chart_data, dict):
@@ -174,7 +189,7 @@ class PsegClient:
 
                         x = pt.get("x", 0)
                         start_utc = datetime.fromtimestamp(x / 1000, tz=timezone.utc) if x else None
-                        est_cost = round(kwh * 0.247, 4)
+                        est_cost = round(kwh * self.electric_rate, 4)
                         records_map[date_iso] = {
                             "date": date_iso,
                             "start": start_utc,
@@ -229,7 +244,7 @@ class PsegClient:
             resp2 = self.session.post(f"{BASE_URL}/Dashboard/Chart", data=chart_setup_data, headers=headers2, timeout=25)
             resp2.raise_for_status()
         except requests.RequestException as err:
-            raise PsegAuthError(f"Failed to set chart context: {err}") from err
+            raise PsegConnectionError(f"Failed to set chart context: {err}") from err
 
         # Step 3: GET /Dashboard/ChartData -> Parse pure JSON series
         ts = int(time.time() * 1000)
@@ -237,8 +252,10 @@ class PsegClient:
             resp3 = self.session.get(f"{BASE_URL}/Dashboard/ChartData", params={"_": ts}, headers=headers2, timeout=25)
             resp3.raise_for_status()
             data = resp3.json()
-        except Exception as err:
-            raise PsegAuthError(f"Failed to retrieve chart data: {err}") from err
+        except requests.RequestException as err:
+            raise PsegConnectionError(f"Failed to retrieve chart data: {err}") from err
+        except json.JSONDecodeError as err:
+            raise PsegConnectionError(f"Invalid JSON returned from chart data: {err}") from err
 
         return self._parse_chart_data(data)
 
@@ -250,11 +267,11 @@ class PsegClient:
             for ar in ajax_results:
                 if isinstance(ar, dict) and ar.get("Action") == "Redirect":
                     raise PsegAuthError("Session expired: Redirected to login portal")
-            raise PsegAuthError("No chart data returned from MyMeter. Session may have expired.")
+            raise PsegConnectionError("No chart data returned from MyMeter. Unexpected portal response.")
 
         series_list = chart_data.get("series", [])
         if not series_list:
-            raise PsegAuthError("No series data returned from MyMeter. Session may have expired.")
+            raise PsegConnectionError("No series data returned from MyMeter. Unexpected portal response.")
 
         nav_series = series_list[0].get("data", [])
         meter_series = {}
@@ -279,7 +296,7 @@ class PsegClient:
                 x = pt.get("x", 0)
                 start_utc = datetime.fromtimestamp(x / 1000, tz=timezone.utc)
                 kwh = round(pt.get("y", 0.0), 4)
-                cost = round(kwh * 0.247, 4)
+                cost = round(kwh * self.electric_rate, 4)
 
                 hourly_records.append({
                     "start": start_utc,

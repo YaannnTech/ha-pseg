@@ -221,9 +221,9 @@ class PsegElectricityConsumptionSensor(PsegBaseSensor):
 
 
 class PsegElectricityCostSensor(PsegBaseSensor):
-    """Sensor for electricity cost in USD."""
+    """Sensor for estimated electricity cost in USD."""
 
-    _attr_name = "Electricity Cost"
+    _attr_name = "Estimated Electricity Cost"
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = None
     _attr_native_unit_of_measurement = "USD"
@@ -234,7 +234,7 @@ class PsegElectricityCostSensor(PsegBaseSensor):
 
     @property
     def native_value(self) -> Optional[float]:
-        """Return the cost in dollars."""
+        """Return the estimated cost in dollars."""
         if self._data and "latest_cost" in self._data:
             return self._data.get("latest_cost")
         if self._restored_state:
@@ -243,6 +243,14 @@ class PsegElectricityCostSensor(PsegBaseSensor):
             except (ValueError, TypeError):
                 pass
         return None
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return extra state attributes."""
+        attrs = super().extra_state_attributes
+        attrs["estimated"] = True
+        attrs["rate_applied"] = self.coordinator.electric_rate
+        return attrs
 
 
 class PsegElectricityMeterSensor(PsegBaseSensor):

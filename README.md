@@ -15,14 +15,14 @@ Includes a built-in Lovelace card with 7-day and 14-day history views and kWh / 
 ## Features
 
 - **Daily Smart Meter Readings**: Captures daily electricity usage (`sensor.pseg_electricity_consumption`).
-- **Cost Tracking**: Tracks daily electricity costs in USD (`sensor.pseg_electricity_cost`).
-- **Home Assistant Energy Dashboard**: Native Long-Term Statistics (LTS) support for both consumption and cost sensors.
-- **Historical Backfill**: Built-in action (`pseg.backfill_history`) to backfill up to 2 years of historical daily usage and cost directly into Home Assistant Energy statistics.
-- **Dynamic Rate Calculation**: Automatically calculates your effective electric rate from actual bill data.
+- **Estimated Cost Tracking**: Computes daily electricity cost estimates in USD (`sensor.pseg_electricity_cost`) using your configured electric rate.
+- **Home Assistant Energy Dashboard**: Native Long-Term Statistics (LTS) support for electricity consumption and cost tracking.
+- **Historical Backfill**: Built-in action (`pseg.backfill_history`) to backfill up to 2 years of historical daily usage and estimated cost directly into Home Assistant Energy statistics.
+- **Configurable Electricity Rate**: Easily configure your effective electric rate (defaulting to standard NJ PSE&G ~$0.247/kWh) via integration options in Home Assistant.
 - **Outdoor Temperature**: Records daily low, average, and high temperatures reported alongside meter readings (`sensor.pseg_outdoor_temperature`).
 - **14-Day History**: Provides 14 days of interval usage and cost data in entity state attributes for local charting.
 - **Manual Refresh**: Includes a refresh button (`button.pseg_refresh_data`) to trigger an immediate data fetch.
-- **Built-in Lovelace Card**: Bundles `pseg-energy-card` ready to add from the card picker.
+- **Auto-Registered Lovelace Card**: Bundles `pseg-energy-card` automatically registered into frontend resources and ready to add from the card picker.
 
 ## Architecture & Dependencies
 
@@ -130,7 +130,7 @@ entity: sensor.pseg_electricity_consumption
 ## Entities Provided
 
 - `sensor.pseg_electricity_consumption`: Latest daily electric usage in kWh (contains `history_14d` and daily stats)
-- `sensor.pseg_electricity_cost`: Latest daily cost in USD
+- `sensor.pseg_electricity_cost`: Latest daily estimated cost in USD
 - `sensor.pseg_meter_id`: Meter serial number and service classification
 - `sensor.pseg_latest_reading_date`: Date of the most recent recorded reading
 - `sensor.pseg_outdoor_temperature`: Recorded low, average, and high temperatures
