@@ -169,36 +169,6 @@ class PsegClient:
             except json.JSONDecodeError as err:
                 raise PsegConnectionError(f"Invalid JSON returned from chart chunk ({chunk_start_str} to {chunk_end_str}): {err}") from err
 
-            # Optional fetch of actual cost series (UsageType: 2)
-            cost_by_date = {}
-            chart_setup_data_cost = dict(chart_setup_data_kwh)
-            chart_setup_data_cost["UsageType"] = "2"
-            try:
-                r_c1 = self.session.post(f"{BASE_URL}/Dashboard/Chart", data=chart_setup_data_cost, headers=headers2, timeout=25)
-                r_c1.raise_for_status()
-                ts_c = int(time.time() * 1000)
-                r_c2 = self.session.get(f"{BASE_URL}/Dashboard/ChartData", params={"_": ts_c}, headers=headers2, timeout=25)
-                r_c2.raise_for_status()
-                c_json = r_c2.json()
-                c_series = c_json.get("Data", {}).get("series", [])
-                c_meter = next((s for s in c_series if "Meter" in str(s.get("name") or "")), None)
-                if not c_meter and c_series:
-                    c_meter = c_series[0]
-                if c_meter:
-                    for cpt in c_meter.get("data", []):
-                        if isinstance(cpt, dict):
-                            c_val = round(float(cpt.get("y", 0.0) or 0.0), 4)
-                            c_hs = cpt.get("hs", {})
-                            c_start = c_hs.get("start", "")
-                            try:
-                                c_date = datetime.strptime(c_start, "%m/%d/%Y").strftime("%Y-%m-%d")
-                            except Exception:
-                                c_date = c_start
-                            if c_date and c_val > 0:
-                                cost_by_date[c_date] = c_val
-            except Exception as cost_chunk_err:
-                _LOGGER.debug("Could not fetch cost chunk (%s to %s): %s", chunk_start_str, chunk_end_str, cost_chunk_err)
-
             chart_data = data.get("Data")
             if not chart_data or not isinstance(chart_data, dict):
                 ajax_results = data.get("AjaxResults") or []
@@ -228,13 +198,7 @@ class PsegClient:
 
                         x = pt.get("x", 0)
                         start_utc = datetime.fromtimestamp(x / 1000, tz=timezone.utc) if x else None
-
-                        # Use exact portal cost if present, otherwise calculate with effective rate
-                        actual_cost = cost_by_date.get(date_iso)
-                        if actual_cost is not None and actual_cost > 0:
-                            cost_val = actual_cost
-                        else:
-                            cost_val = round(kwh * self.effective_rate, 4)
+                        cost_val = round(kwh * self.effective_rate, 4)
 
                         records_map[date_iso] = {
                             "date": date_iso,
@@ -288,7 +252,7 @@ class PsegClient:
             "Origin": BASE_URL,
         }
 
-        # Step 2a: Query kWh consumption data
+        # Step 2: Query kWh consumption data
         try:
             resp2 = self.session.post(f"{BASE_URL}/Dashboard/Chart", data=chart_setup_data_kwh, headers=headers2, timeout=25)
             resp2.raise_for_status()
@@ -305,24 +269,10 @@ class PsegClient:
         except json.JSONDecodeError as err:
             raise PsegConnectionError(f"Invalid JSON returned from chart data: {err}") from err
 
-        # Step 2b: Query dollar cost data (UsageType: 2)
-        cost_data = None
-        chart_setup_data_cost = dict(chart_setup_data_kwh)
-        chart_setup_data_cost["UsageType"] = "2"
-        try:
-            resp4 = self.session.post(f"{BASE_URL}/Dashboard/Chart", data=chart_setup_data_cost, headers=headers2, timeout=25)
-            resp4.raise_for_status()
-            ts2 = int(time.time() * 1000)
-            resp5 = self.session.get(f"{BASE_URL}/Dashboard/ChartData", params={"_": ts2}, headers=headers2, timeout=25)
-            resp5.raise_for_status()
-            cost_data = resp5.json()
-        except Exception as cost_err:
-            _LOGGER.debug("Could not fetch cost chart data (UsageType: 2): %s", cost_err)
+        return self._parse_chart_data(kwh_data)
 
-        return self._parse_chart_data(kwh_data, cost_data)
-
-    def _parse_chart_data(self, data: Dict[str, Any], cost_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Parse series into clean sensor model and compute 7-day effective rate."""
+    def _parse_chart_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse series into clean sensor model and calculate costs using effective rate."""
         chart_data = data.get("Data")
         if not chart_data or not isinstance(chart_data, dict):
             ajax_results = data.get("AjaxResults") or []
@@ -350,29 +300,6 @@ class PsegClient:
         detailed_pts = meter_series.get("data", [])
         temp_pts = temp_series.get("data", [])
 
-        # Extract actual costs from cost_data if available
-        hourly_cost_map: dict[int, float] = {}
-        daily_cost_map: dict[str, float] = {}
-        if cost_data and isinstance(cost_data.get("Data"), dict):
-            c_series_list = cost_data["Data"].get("series", [])
-            c_meter = next((s for s in c_series_list if "Meter" in str(s.get("name") or "")), None)
-            if not c_meter and c_series_list:
-                c_meter = c_series_list[0]
-            if c_meter:
-                for cpt in c_meter.get("data", []):
-                    if isinstance(cpt, dict):
-                        cx = cpt.get("x", 0)
-                        c_val = round(float(cpt.get("y", 0.0) or 0.0), 4)
-                        hourly_cost_map[cx] = c_val
-
-                        chs = cpt.get("hs", {})
-                        c_start = chs.get("start", "")
-                        try:
-                            c_iso = datetime.strptime(c_start, "%m/%d/%Y").strftime("%Y-%m-%d")
-                        except Exception:
-                            c_iso = datetime.fromtimestamp(cx / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-                        daily_cost_map[c_iso] = round(daily_cost_map.get(c_iso, 0.0) + c_val, 4)
-
         # Parse kWh data points and aggregate daily totals
         daily_kwh_map: dict[str, float] = {}
         parsed_pts = []
@@ -397,84 +324,50 @@ class PsegClient:
                     "x": x,
                 })
 
-        # Calculate effective rate from the average of the last 7 days where BOTH cost and kWh are available
         sorted_dates = sorted(daily_kwh_map.keys())
-        qualifying_days = [
-            d for d in reversed(sorted_dates)
-            if daily_kwh_map.get(d, 0.0) > 0.0 and daily_cost_map.get(d, 0.0) > 0.0
-        ][:7]
 
-        if qualifying_days:
-            total_cost_7d = sum(daily_cost_map[d] for d in qualifying_days)
-            total_kwh_7d = sum(daily_kwh_map[d] for d in qualifying_days)
-            derived_7d_rate = round(total_cost_7d / total_kwh_7d, 4)
-            days_used_for_rate = len(qualifying_days)
-        else:
-            derived_7d_rate = None
-            days_used_for_rate = 0
-
-        # Hierarchy: 1) User configured override, 2) 7-day average of available data, 3) Default rate
+        # Hierarchy: 1) User configured override, 2) Default rate
         if self.user_configured_rate is not None and self.user_configured_rate > 0:
             effective_rate = self.user_configured_rate
             rate_source = "user_configured"
-        elif derived_7d_rate is not None:
-            effective_rate = derived_7d_rate
-            rate_source = "derived_7d_average"
         else:
             effective_rate = DEFAULT_ELECTRIC_RATE
             rate_source = "default"
 
         self.effective_rate = effective_rate
         self.rate_source = rate_source
-        self.rate_7d_avg = derived_7d_rate
-        self.days_used_for_rate = days_used_for_rate
+        self.rate_7d_avg = None
+        self.days_used_for_rate = 0
 
         _LOGGER.debug(
-            "PSE&G Rate Resolved: %s $/kWh (source=%s, 7d_avg=%s, days_used=%d)",
+            "PSE&G Rate Resolved: %s $/kWh (source=%s)",
             effective_rate,
             rate_source,
-            derived_7d_rate,
-            days_used_for_rate,
         )
 
-        # Build final hourly records with actual or derived cost
+        # Build final hourly records with calculated cost
         hourly_records = []
         for p in parsed_pts:
-            x_time = p["x"]
             p_kwh = p["kwh"]
-            actual_hourly_cost = hourly_cost_map.get(x_time)
-            if actual_hourly_cost is not None and actual_hourly_cost > 0:
-                cost_val = actual_hourly_cost
-                is_exact = True
-            else:
-                cost_val = round(p_kwh * effective_rate, 4)
-                is_exact = False
-
+            cost_val = round(p_kwh * effective_rate, 4)
             hourly_records.append({
                 "start": p["start"],
                 "date": p["date"],
                 "kwh": p_kwh,
                 "cost": cost_val,
-                "is_exact_cost": is_exact,
+                "is_exact_cost": False,
             })
 
         # Build daily history (14 days)
         history_14d = []
         for d in sorted_dates:
             day_kwh = round(daily_kwh_map[d], 2)
-            actual_day_cost = daily_cost_map.get(d)
-            if actual_day_cost is not None and actual_day_cost > 0:
-                day_cost = round(actual_day_cost, 2)
-                is_exact_day = True
-            else:
-                day_cost = round(daily_kwh_map[d] * effective_rate, 2)
-                is_exact_day = False
-
+            day_cost = round(day_kwh * effective_rate, 2)
             history_14d.append({
                 "date": d,
                 "kwh": day_kwh,
                 "cost": day_cost,
-                "is_exact_cost": is_exact_day,
+                "is_exact_cost": False,
             })
 
         latest_record = history_14d[-1] if history_14d else {"date": "None", "kwh": 0.0, "cost": 0.0, "is_exact_cost": False}
@@ -500,6 +393,6 @@ class PsegClient:
             "total_records": len(nav_series),
             "effective_rate": effective_rate,
             "rate_source": rate_source,
-            "rate_7d_avg": derived_7d_rate,
-            "days_used_for_rate": days_used_for_rate,
+            "rate_7d_avg": None,
+            "days_used_for_rate": 0,
         }
