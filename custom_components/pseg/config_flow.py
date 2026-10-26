@@ -15,7 +15,11 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
+    AUTH_TYPE_COOKIE,
+    AUTH_TYPE_MYMETER,
+    AUTH_TYPE_OKTA,
     CONF_AUTH_SERVER_URL,
+    CONF_AUTH_TYPE,
     CONF_COOKIE,
     CONF_ELECTRIC_RATE,
     CONF_MFA_CODE,
@@ -80,16 +84,19 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Step 1: Choose connection method."""
         working_url = await self._async_detect_auth_server()
         if working_url:
-            menu_options = ["automated", "cookie"]
+            menu_options = [
+                "cookie_mymeter",
+                "automated_mymeter",
+                "automated_okta",
+                "cookie_okta",
+            ]
             addon_status = ""
         else:
-            menu_options = ["cookie"]
+            menu_options = ["cookie_mymeter", "cookie_okta"]
             addon_status = (
-                "⚠️ **PSE&G Auth Companion Add-on Not Detected**\n\n"
-                "Automated OTP/MFA login is disabled because the companion add-on is not running on port 8000. "
-                "To enable automated sign-in, install and start the companion add-on from "
-                "[ha-pseg-auth-addon](https://github.com/sidprax/ha-pseg-auth-addon).\n\n"
-                "Alternatively, connect using a **Browser Session Cookie** below:\n\n"
+                "💡 **Add-on Optional**: You can connect directly using a **Persistent Browser Cookie** without any add-ons.\n\n"
+                "If you prefer automated hands-off background renewal, install the "
+                "[PSE&G Auth Companion Add-on](https://github.com/sidprax/ha-pseg-auth-addon) to enable automated sign-in.\n\n"
             )
 
         return self.async_show_menu(
@@ -107,16 +114,14 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         working_url = await self._async_detect_auth_server()
         if working_url:
-            menu_options = ["reauth_confirm", "cookie"]
+            menu_options = ["reauth_confirm", "cookie_mymeter", "cookie_okta"]
             addon_status = ""
         else:
-            menu_options = ["cookie"]
+            menu_options = ["cookie_mymeter", "cookie_okta"]
             addon_status = (
                 "⚠️ **PSE&G Auth Companion Add-on Not Detected**\n\n"
                 "Automated re-authentication is disabled because the companion add-on is not running. "
-                "To enable automated sign-in, install or start the companion add-on from "
-                "[ha-pseg-auth-addon](https://github.com/sidprax/ha-pseg-auth-addon).\n\n"
-                "Alternatively, re-authenticate using a **Browser Session Cookie** below:\n\n"
+                "Update your session using a **Browser Cookie** below, or start the companion add-on.\n\n"
             )
 
         return self.async_show_menu(
@@ -134,16 +139,19 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         working_url = await self._async_detect_auth_server()
         if working_url:
-            menu_options = ["reauth_confirm", "cookie"]
+            menu_options = [
+                "cookie_mymeter",
+                "automated_mymeter",
+                "automated_okta",
+                "cookie_okta",
+            ]
             addon_status = ""
         else:
-            menu_options = ["cookie"]
+            menu_options = ["cookie_mymeter", "cookie_okta"]
             addon_status = (
                 "⚠️ **PSE&G Auth Companion Add-on Not Detected**\n\n"
                 "Automated reconfiguration is disabled because the companion add-on is not running. "
-                "To enable automated sign-in, install or start the companion add-on from "
-                "[ha-pseg-auth-addon](https://github.com/sidprax/ha-pseg-auth-addon).\n\n"
-                "Alternatively, update credentials using a **Browser Session Cookie** below:\n\n"
+                "Update credentials using a **Browser Cookie** below, or start the companion add-on.\n\n"
             )
 
         return self.async_show_menu(
@@ -264,10 +272,119 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={"username": default_username},
         )
 
-    async def async_step_automated(
+    async def async_step_automated_mymeter(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        """Step 2a: Automated sign-in with username, password, and MFA channel."""
+        """Automated direct sign-in via MyMeter invited account (zero 2FA)."""
+        errors: Dict[str, str] = {}
+        auth_url = DEFAULT_AUTH_SERVER_URL
+
+        if user_input is not None:
+            username = user_input.get(CONF_USERNAME, "").strip()
+            password = user_input.get(CONF_PASSWORD, "").strip()
+
+            if not username or not password:
+                errors["base"] = "missing_credentials"
+            else:
+                candidate_urls = [auth_url]
+                if "127.0.0.1" in auth_url and "http://localhost:8000" not in candidate_urls:
+                    candidate_urls.append("http://localhost:8000")
+                elif "localhost" in auth_url and "http://127.0.0.1:8000" not in candidate_urls:
+                    candidate_urls.append("http://127.0.0.1:8000")
+
+                connected = False
+                session = async_get_clientsession(self.hass)
+                cookies = None
+                for target_url in candidate_urls:
+                    try:
+                        async with session.post(
+                            f"{target_url}/login",
+                            json={
+                                "username": username,
+                                "password": password,
+                                "auth_type": AUTH_TYPE_MYMETER,
+                                "dispatch_mfa": False,
+                            },
+                            timeout=aiohttp.ClientTimeout(total=90),
+                        ) as resp:
+                            connected = True
+                            self.context["auth_url"] = target_url
+                            self.context["username"] = username
+                            self.context["password"] = password
+                            if resp.status == 200:
+                                res_json = await resp.json()
+                                if res_json.get("success") and res_json.get("cookies"):
+                                    cookies = res_json["cookies"]
+                                    auth_url = target_url
+                                    break
+                                else:
+                                    errors["base"] = "invalid_auth"
+                                    break
+                            else:
+                                try:
+                                    res_json = await resp.json()
+                                except Exception:
+                                    res_json = {}
+                                if resp.status == 403 or res_json.get("recaptcha_blocked"):
+                                    errors["base"] = "recaptcha_blocked"
+                                elif resp.status == 500:
+                                    errors["base"] = "auth_server_error"
+                                else:
+                                    errors["base"] = "invalid_auth"
+                                break
+                    except aiohttp.ClientConnectorError:
+                        continue
+                    except Exception as err:
+                        _LOGGER.exception("MyMeter login error: %s", err)
+                        errors["base"] = "unknown"
+                        break
+
+                if cookies:
+                    if getattr(self, "_reauth_entry", None):
+                        return self.async_update_reload_and_abort(
+                            self._reauth_entry,
+                            data={
+                                **self._reauth_entry.data,
+                                CONF_COOKIE: cookies,
+                                CONF_USERNAME: username,
+                                CONF_PASSWORD: password,
+                                CONF_AUTH_SERVER_URL: auth_url,
+                                CONF_AUTH_TYPE: AUTH_TYPE_MYMETER,
+                            },
+                        )
+                    await self.async_set_unique_id(username.lower())
+                    self._abort_if_unique_id_configured()
+                    return self.async_create_entry(
+                        title=f"PSE&G ({username})",
+                        data={
+                            CONF_COOKIE: cookies,
+                            CONF_USERNAME: username,
+                            CONF_PASSWORD: password,
+                            CONF_AUTH_SERVER_URL: auth_url,
+                            CONF_AUTH_TYPE: AUTH_TYPE_MYMETER,
+                        },
+                    )
+
+                if not connected and not errors:
+                    errors["base"] = "auth_server_unavailable"
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_USERNAME): str,
+                vol.Required(CONF_PASSWORD): str,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="automated_mymeter",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    async def async_step_automated_okta(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Step 2a: Automated sign-in via primary PSE&G Okta SSO."""
         errors: Dict[str, str] = {}
 
         if user_input is not None:
@@ -295,6 +412,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             json={
                                 "username": username,
                                 "password": password,
+                                "auth_type": AUTH_TYPE_OKTA,
                                 "mfa_method": mfa_method,
                                 "dispatch_mfa": True,
                             },
@@ -304,6 +422,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             self.context["auth_url"] = target_url
                             self.context["username"] = username
                             self.context["password"] = password
+                            self.context["auth_type"] = AUTH_TYPE_OKTA
                             if resp.status == 200:
                                 res_json = await resp.json()
                                 if res_json.get("success") and res_json.get("cookies"):
@@ -342,6 +461,18 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if auth_result:
                     action, cookies, target_url = auth_result
                     if action == "success":
+                        if getattr(self, "_reauth_entry", None):
+                            return self.async_update_reload_and_abort(
+                                self._reauth_entry,
+                                data={
+                                    **self._reauth_entry.data,
+                                    CONF_COOKIE: cookies,
+                                    CONF_USERNAME: username,
+                                    CONF_PASSWORD: password,
+                                    CONF_AUTH_SERVER_URL: target_url,
+                                    CONF_AUTH_TYPE: AUTH_TYPE_OKTA,
+                                },
+                            )
                         await self.async_set_unique_id(username.lower())
                         self._abort_if_unique_id_configured()
                         return self.async_create_entry(
@@ -351,6 +482,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 CONF_USERNAME: username,
                                 CONF_PASSWORD: password,
                                 CONF_AUTH_SERVER_URL: target_url,
+                                CONF_AUTH_TYPE: AUTH_TYPE_OKTA,
                             },
                         )
                     elif action == "mfa":
@@ -370,10 +502,16 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
         return self.async_show_form(
-            step_id="automated",
+            step_id="automated_okta",
             data_schema=schema,
             errors=errors,
         )
+
+    async def async_step_automated(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Alias for backwards compatibility."""
+        return await self.async_step_automated_mymeter(user_input)
 
     async def async_step_mfa(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -459,59 +597,102 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_cookie(
+    async def _async_validate_and_create_cookie_entry(
+        self, cookie: str, step_id: str, auth_type: str = AUTH_TYPE_COOKIE
+    ) -> FlowResult:
+        """Helper to validate cookie and create or update the config entry."""
+        cookie_valid = False
+        try:
+            client = PsegClient(cookie)
+            await self.hass.async_add_executor_job(client.test_connection)
+            cookie_valid = True
+        except PsegAuthError as err:
+            _LOGGER.error("Cookie validation error: %s", err)
+            return self.async_show_form(
+                step_id=step_id,
+                data_schema=vol.Schema({vol.Required(CONF_COOKIE): str}),
+                errors={"base": "invalid_cookie"},
+            )
+        except PsegConnectionError as err:
+            _LOGGER.error("Connection error validating cookie: %s", err)
+            return self.async_show_form(
+                step_id=step_id,
+                data_schema=vol.Schema({vol.Required(CONF_COOKIE): str}),
+                errors={"base": "cannot_connect"},
+            )
+        except Exception as err:
+            _LOGGER.exception("Unexpected error validating cookie: %s", err)
+            return self.async_show_form(
+                step_id=step_id,
+                data_schema=vol.Schema({vol.Required(CONF_COOKIE): str}),
+                errors={"base": "unknown"},
+            )
+
+        if cookie_valid:
+            if getattr(self, "_reauth_entry", None):
+                return self.async_update_reload_and_abort(
+                    self._reauth_entry,
+                    data={
+                        **self._reauth_entry.data,
+                        CONF_COOKIE: cookie,
+                        CONF_AUTH_TYPE: auth_type,
+                    },
+                )
+            return self.async_create_entry(
+                title="PSE&G Energy",
+                data={
+                    CONF_COOKIE: cookie,
+                    CONF_AUTH_TYPE: auth_type,
+                },
+            )
+
+    async def async_step_cookie_mymeter(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        """Step 2b: Direct browser session cookie entry."""
+        """Direct persistent browser cookie from MyMeter invited account."""
         errors: Dict[str, str] = {}
-
         if user_input is not None:
             cookie = user_input.get(CONF_COOKIE, "").strip()
             if not cookie:
                 errors["base"] = "missing_credentials"
             else:
-                cookie_valid = False
-                try:
-                    client = PsegClient(cookie)
-                    await self.hass.async_add_executor_job(client.test_connection)
-                    cookie_valid = True
-                except PsegAuthError as err:
-                    _LOGGER.error("Cookie validation error: %s", err)
-                    errors["base"] = "invalid_cookie"
-                except PsegConnectionError as err:
-                    _LOGGER.error("Connection error validating cookie: %s", err)
-                    errors["base"] = "cannot_connect"
-                except Exception as err:
-                    _LOGGER.exception("Unexpected error validating cookie: %s", err)
-                    errors["base"] = "unknown"
+                return await self._async_validate_and_create_cookie_entry(
+                    cookie, step_id="cookie_mymeter", auth_type=AUTH_TYPE_COOKIE
+                )
 
-                if cookie_valid:
-                    if getattr(self, "_reauth_entry", None):
-                        return self.async_update_reload_and_abort(
-                            self._reauth_entry,
-                            data={
-                                **self._reauth_entry.data,
-                                CONF_COOKIE: cookie,
-                            },
-                        )
-                    return self.async_create_entry(
-                        title="PSE&G Energy",
-                        data={
-                            CONF_COOKIE: cookie,
-                        },
-                    )
-
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_COOKIE): str,
-            }
-        )
-
+        schema = vol.Schema({vol.Required(CONF_COOKIE): str})
         return self.async_show_form(
-            step_id="cookie",
+            step_id="cookie_mymeter",
             data_schema=schema,
             errors=errors,
         )
+
+    async def async_step_cookie_okta(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Session browser cookie from primary PSE&G account."""
+        errors: Dict[str, str] = {}
+        if user_input is not None:
+            cookie = user_input.get(CONF_COOKIE, "").strip()
+            if not cookie:
+                errors["base"] = "missing_credentials"
+            else:
+                return await self._async_validate_and_create_cookie_entry(
+                    cookie, step_id="cookie_okta", auth_type=AUTH_TYPE_COOKIE
+                )
+
+        schema = vol.Schema({vol.Required(CONF_COOKIE): str})
+        return self.async_show_form(
+            step_id="cookie_okta",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    async def async_step_cookie(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Alias for backwards compatibility."""
+        return await self.async_step_cookie_mymeter(user_input)
 
     @staticmethod
     @callback
@@ -538,6 +719,14 @@ class PsegOptionsFlowHandler(config_entries.OptionsFlow):
                         user_input[CONF_ELECTRIC_RATE] = None
                 except (ValueError, TypeError):
                     user_input[CONF_ELECTRIC_RATE] = None
+
+            # Normalize auth_server_url (allow empty for cookie-only users)
+            auth_url = user_input.get(CONF_AUTH_SERVER_URL)
+            if auth_url:
+                user_input[CONF_AUTH_SERVER_URL] = auth_url.strip()
+            else:
+                user_input[CONF_AUTH_SERVER_URL] = ""
+
             return self.async_create_entry(title="", data=user_input)
 
         current_rate = self.config_entry.options.get(
@@ -546,7 +735,7 @@ class PsegOptionsFlowHandler(config_entries.OptionsFlow):
         )
         current_auth_url = self.config_entry.options.get(
             CONF_AUTH_SERVER_URL,
-            self.config_entry.data.get(CONF_AUTH_SERVER_URL, DEFAULT_AUTH_SERVER_URL),
+            self.config_entry.data.get(CONF_AUTH_SERVER_URL, ""),
         )
 
         schema_dict: Dict[Any, Any] = {}
@@ -562,7 +751,8 @@ class PsegOptionsFlowHandler(config_entries.OptionsFlow):
         else:
             schema_dict[vol.Optional(CONF_ELECTRIC_RATE)] = vol.Coerce(float)
 
-        schema_dict[vol.Required(CONF_AUTH_SERVER_URL, default=str(current_auth_url))] = str
+        auth_url_val = str(current_auth_url) if current_auth_url else ""
+        schema_dict[vol.Optional(CONF_AUTH_SERVER_URL, default=auth_url_val)] = str
 
         options_schema = vol.Schema(schema_dict)
 

@@ -24,7 +24,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    AUTH_TYPE_MYMETER,
     CONF_AUTH_SERVER_URL,
+    CONF_AUTH_TYPE,
     CONF_COOKIE,
     CONF_ELECTRIC_RATE,
     CONF_PASSWORD,
@@ -107,7 +109,16 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
     def _raise_auth_issues(self, err_msg: str, addon_offline: bool = False) -> None:
         """Raise persistent notification and repairs issue when authentication is required."""
         entry_id = self.config_entry.entry_id if self.config_entry else "default"
-        if addon_offline:
+        is_cookie_mode = (
+            self.entry_data.get(CONF_AUTH_TYPE) == AUTH_TYPE_COOKIE
+            or not self.entry_data.get(CONF_USERNAME)
+        )
+        if is_cookie_mode:
+            msg = (
+                "Your PSE&G browser cookie has expired. "
+                "Please go to **Settings > Devices & Services > PSE&G** and click **Reconfigure** to update your cookie."
+            )
+        elif addon_offline:
             msg = (
                 "Your PSE&G session has expired and the automated Companion Add-on on port 8000 is not running. "
                 "Please start or restart the **PSE&G Auth Companion** under **Settings > Add-ons**, or go to "
@@ -186,11 +197,17 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             addon_connected = False
             if username and password:
                 session = async_get_clientsession(self.hass)
+                auth_type = self.entry_data.get(CONF_AUTH_TYPE, AUTH_TYPE_MYMETER)
                 for auth_url in candidate_urls:
                     try:
                         async with session.post(
                             f"{auth_url}/login",
-                            json={"username": username, "password": password, "dispatch_mfa": False},
+                            json={
+                                "username": username,
+                                "password": password,
+                                "auth_type": auth_type,
+                                "dispatch_mfa": False,
+                            },
                             timeout=aiohttp.ClientTimeout(total=90),
                         ) as resp:
                                 addon_connected = True
@@ -232,8 +249,16 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             # Silent re-authentication could not complete -> alert user and trigger Reconfigure
             self.auth_required = True
             self.status = "auth_required"
-            addon_offline = not addon_connected
+            is_cookie_mode = (
+                self.entry_data.get(CONF_AUTH_TYPE) == AUTH_TYPE_COOKIE
+                or not username
+            )
+            addon_offline = not addon_connected if not is_cookie_mode else False
             self._raise_auth_issues(str(err), addon_offline=addon_offline)
+            if is_cookie_mode:
+                raise ConfigEntryAuthFailed(
+                    "PSE&G browser cookie has expired. Please update your cookie under Settings > Devices & Services > PSE&G > Reconfigure."
+                ) from err
             if addon_offline:
                 raise ConfigEntryAuthFailed(
                     "PSE&G Companion Add-on is offline (port 8000 unreachable). Please start or restart the companion add-on under Settings > Add-ons, or re-authenticate with a Browser Session Cookie."

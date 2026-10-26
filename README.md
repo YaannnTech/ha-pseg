@@ -24,6 +24,127 @@ Includes a built-in Lovelace card with 7-day and 14-day history views and kWh / 
 - **Manual Refresh**: Includes a refresh button (`button.pseg_refresh_data`) to trigger an immediate data fetch.
 - **Auto-Registered Lovelace Card**: Bundles `pseg-energy-card` automatically registered into frontend resources and ready to add from the card picker.
 
+## Authentication Methods
+
+PSE&G provides electric smart meter interval data and billing cost details through its MySmartEnergy portal ([mysmartenergy.nj.pseg.com](https://mysmartenergy.nj.pseg.com/)), powered by the MyMeter platform.
+
+Depending on your Home Assistant installation type and whether you prefer running background services or keeping your setup lightweight, the integration supports four authentication methods:
+
+### Comparison
+
+| Method | Recommended For | Add-on Needed? | 2FA / OTP Prompts | Cookie Lifespan | Automated Renewal | Initial Setup Effort |
+|---|---|---|---|---|---|---|
+| **Option 1: Direct MyMeter Persistent Cookie** | Most Users. Most convenient overall with minimal initial manual effort. No containers needed. | No | None | Long-lived (Persistent `MM_SID` with "Remember Me") | Manual re-paste on expiration | Low (one-time email invite) |
+| **Option 2: Direct MyMeter Automated Sign-In** | Hands-off users running HA OS or Supervised who want fully automated background renewal. | Yes ([Auth Add-on](https://github.com/sidprax/ha-pseg-auth-addon)) | None | Auto-renewed | Fully automated and silent | Low (one-time email invite) |
+| **Option 3: Primary PSE&G Account Automated Sign-In** | Users who prefer using their existing `pseg.com` login and don't mind entering SMS/Email OTP codes. | Yes ([Auth Add-on](https://github.com/sidprax/ha-pseg-auth-addon)) | SMS or Email OTP on setup and renewal | Auto-renewed | Requires OTP entry when prompted | Very Low (uses existing login) |
+| **Option 4: Primary PSE&G Account Session Cookie** | Quick testing or users who only want to use their primary account without installing the companion add-on. | No | None (handled during browser login) | Short-lived (expires with browser session) | Manual re-paste on expiration | Very Low (copy from browser DevTools) |
+
+---
+
+### Step-by-Step Guides and Tradeoffs
+
+#### Option 1: Direct MyMeter Persistent Cookie (Recommended, No Add-on)
+
+Option 1 is the most convenient everyday option. While it requires some initial manual effort to invite the secondary email and copy the cookie once, it runs completely free of background containers, requires zero SMS or Email OTP prompts, and generates a long-lived persistent cookie (`MM_SID`) via "Remember Me" that survives browser and machine restarts.
+
+##### Step-by-Step Setup:
+1. **Invite a secondary email on MyMeter**:
+   - Log into your primary PSE&G account at [pseg.com](https://www.pseg.com) and navigate to **MySmartEnergy (MyMeter)**.
+   - In the top navigation menu, click **Connect User / Share Access**.
+   - Enter an email address (a secondary email or an alias like `yourname+pseg@gmail.com`).
+   - Select your electric meter, select access through **No end date**, and send the invitation.
+2. **Activate the invited user**:
+   - Open the invitation email, click the link, and choose a password and security question.
+3. **Capture the persistent cookie**:
+   - In your desktop browser, go directly to [mysmartenergy.nj.pseg.com](https://mysmartenergy.nj.pseg.com).
+   - Sign in using your **invited email address** and password, and **check "Remember Me"**. Click **Login**.
+   - After the dashboard loads, press **F12** (Developer Tools).
+   - Switch to the **Network** tab and refresh the page (**F5**).
+   - Click any request to `mysmartenergy.nj.pseg.com` (such as `Dashboard` or `GetIntervalData`).
+   - In the **Headers** tab, locate **Request Headers**, find `Cookie:`, and copy the full cookie string (it includes `MM_SID`, `ASP.NET_SessionId`, etc.).
+4. **Configure Home Assistant**:
+   - In Home Assistant, navigate to **Settings** > **Devices & Services** > **Add Integration** > **PSE&G Energy**.
+   - Select **Persistent Browser Cookie: Direct MyMeter (Recommended, No Add-on)**.
+   - Paste the cookie string and submit.
+
+##### Pros and Cons:
+- **Pros**:
+  - No companion add-on or Docker required: Works on Home Assistant Core, Container, Supervised, and OS.
+  - Zero 2FA prompts: Does not rely on Okta MFA, SMS codes, or phone numbers.
+  - Long session lifespan: "Remember Me" creates a persistent cookie (`MM_SID`) that remains active long-term.
+- **Cons**:
+  - Manual re-entry on expiration: If PSE&G ever resets sessions, you need to copy and paste a new cookie via integration Reconfigure.
+
+---
+
+#### Option 2: Direct MyMeter Automated Sign-In (Recommended, With Add-on)
+
+Best for hands-off installations. Headless Chromium signs into `mysmartenergy.nj.pseg.com` directly, handles the invisible background reCAPTCHA, checks "Remember Me", and captures session cookies. Because direct MyMeter logins do not go through Okta SSO, no SMS or Email OTP code is ever requested.
+
+##### Step-by-Step Setup:
+1. **Invite a secondary email on MyMeter**: Follow Steps 1 and 2 from Option 1 above.
+2. **Install the Companion Add-on**:
+   - Add the add-on repository: `https://github.com/sidprax/ha-pseg-auth-addon`.
+   - Install **PSE&G Auth Companion**, start it, and enable **Start on boot** and **Watchdog**.
+3. **Configure Home Assistant**:
+   - In Home Assistant, go to **Settings** > **Devices & Services** > **Add Integration** > **PSE&G Energy**.
+   - Select **Automated Sign-In: Direct MyMeter (Recommended, Zero 2FA)**.
+   - Enter your invited email address and password, then submit.
+
+##### Pros and Cons:
+- **Pros**:
+  - Fully automated renewal: The coordinator renews cookies in the background without interruptions.
+  - Zero 2FA prompts: No verification codes needed on initial setup or renewal.
+  - No DevTools needed: No manual cookie copying.
+- **Cons**:
+  - Requires running the companion container (Chromium and Selenium).
+
+---
+
+#### Option 3: Primary PSE&G Account Automated Sign-In (With Add-on, Okta 2FA)
+
+Uses your primary `nj.pseg.com` account. Headless Chromium automates Okta SSO navigation and reCAPTCHA challenges, then prompts you in Home Assistant for your SMS or Email verification passcode.
+
+##### Step-by-Step Setup:
+1. **Install the Companion Add-on**: Add repository `https://github.com/sidprax/ha-pseg-auth-addon` and start **PSE&G Auth Companion**.
+2. **Configure Home Assistant**:
+   - In Home Assistant, go to **Settings** > **Devices & Services** > **Add Integration** > **PSE&G Energy**.
+   - Select **Automated Sign-In: Primary PSE&G Account (Okta 2FA)**.
+   - Enter your primary PSE&G credentials, choose your 2FA method (**SMS** or **Email**), and submit.
+   - Enter the 6-digit verification code received on your phone or email.
+
+##### Pros and Cons:
+- **Pros**:
+  - Uses existing primary credentials without inviting an extra account.
+  - Automates browser navigation and reCAPTCHA.
+- **Cons**:
+  - Requires OTP entry on initial setup and when sessions expire.
+  - Requires running the companion container.
+
+---
+
+#### Option 4: Primary PSE&G Account Session Cookie (Manual, No Add-on)
+
+Uses a temporary session cookie copied from an active primary account browser session.
+
+##### Step-by-Step Setup:
+1. Log into [pseg.com](https://www.pseg.com) with your primary account credentials and complete 2FA.
+2. Navigate to **MySmartEnergy (MyMeter)**.
+3. Press **F12** to open Developer Tools, select the **Network** tab, and refresh (**F5**).
+4. Click any request to `mysmartenergy.nj.pseg.com` (e.g. `Dashboard`).
+5. Under **Request Headers**, copy the full value of the `Cookie:` header.
+6. In Home Assistant, go to **Settings** > **Devices & Services** > **Add Integration** > **PSE&G Energy**, select **Session Browser Cookie: Primary PSE&G Account**, paste the cookie, and submit.
+
+##### Pros and Cons:
+- **Pros**:
+  - Zero add-on dependencies.
+  - Uses existing primary login.
+- **Cons**:
+  - Short session lifespan: Session cookies expire when the browser session ends.
+  - Requires frequent manual re-entry.
+
+---
+
 ## Architecture & Dependencies
 
 This project follows a clean **two-component architecture** to keep the core Home Assistant installation lightweight while enabling automated portal sign-in:
@@ -31,14 +152,14 @@ This project follows a clean **two-component architecture** to keep the core Hom
 | Component | Responsibility | Repository / Install | Dependencies |
 |---|---|---|---|
 | **PSE&G Integration** | Fetches hourly/daily usage & cost data from the MySmartEnergy portal; exposes sensors, buttons, and dashboard cards. | This repository (`sidprax/ha-pseg`) via HACS | `beautifulsoup4` (installed automatically by HA Core). Zero external system packages required. |
-| **PSE&G Auth Companion Add-on** | *Optional companion service.* Runs an isolated headless browser to automate Okta portal authentication, handle reCAPTCHA challenges, and submit OTP codes. | [`sidprax/ha-pseg-auth-addon`](https://github.com/sidprax/ha-pseg-auth-addon) via HA Add-on Store | Packaged inside its own Docker container: Chromium, ChromeDriver, FFmpeg, Selenium, and SpeechRecognition. Does not bloat or affect HA Core. |
-| **Browser Session Cookie** | Direct manual authentication without running any companion service. | Built-in | Zero external dependencies. Works on any installation type. |
+| **PSE&G Auth Companion Add-on** | *Optional companion service.* Runs an isolated headless browser to automate MyMeter or Okta portal authentication, handle reCAPTCHA challenges, and coordinate sign-in. | [`sidprax/ha-pseg-auth-addon`](https://github.com/sidprax/ha-pseg-auth-addon) via HA Add-on Store | Packaged inside its own Docker container: Chromium, ChromeDriver, FFmpeg, Selenium, and SpeechRecognition. Does not bloat or affect HA Core. |
+| **Browser Cookie** | Direct manual authentication without running any companion service. | Built-in | Zero external dependencies. Works on any installation type. |
 
 ## Installation
 
-### Step 1: Install the Companion Add-on (Optional, for Automated OTP Sign-in)
+### Step 1: Install the Companion Add-on (Optional, for Automated Sign-In)
 
-If you wish to use automated username/password sign-in with SMS or Email OTP:
+If you choose **Option 2** (Direct MyMeter Automated Sign-In) or **Option 3** (Primary Account Automated Sign-In):
 
 1. Add the companion add-on repository to Home Assistant:
 
@@ -49,7 +170,7 @@ If you wish to use automated username/password sign-in with SMS or Email OTP:
 3. Enable **Start on boot** and **Watchdog**.
 
 > [!NOTE]
-> If you prefer not to install the add-on, you can skip this step and connect using a **Browser Session Cookie** instead.
+> If you choose **Option 1** (Persistent Browser Cookie) or **Option 4** (Session Browser Cookie), you can skip this step entirely.
 
 ### Step 2: Install the Integration
 
@@ -86,10 +207,12 @@ If you wish to use automated username/password sign-in with SMS or Email OTP:
 
 1. In Home Assistant, go to **Settings** > **Devices & Services** > **Add Integration**.
 2. Search for **PSE&G Energy (New Jersey)**.
-3. Choose your sign-in method:
-   - **Automated Sign-In (Requires Companion Add-on)**: Enter your PSE&G portal username and password, then select your MFA delivery method (SMS or Email). If the companion add-on is not running, this option is disabled in the menu and you will be prompted to install it or use a session cookie.
-   - **Browser Session Cookie (No Add-on Required)**: Provide an active session cookie copied from `mysmartenergy.nj.pseg.com`. Requires no companion add-on and works from anywhere.
-4. Click **Submit**.
+3. Select your preferred authentication method from the menu:
+   - **Persistent Browser Cookie: Direct MyMeter (Recommended, No Add-on)**
+   - **Automated Sign-In: Direct MyMeter (Recommended, Zero 2FA)**
+   - **Automated Sign-In: Primary PSE&G Account (Okta 2FA)**
+   - **Session Browser Cookie: Primary PSE&G Account**
+4. Follow the on-screen prompts for your selected method and click **Submit**.
 
 ## Home Assistant Energy Dashboard
 

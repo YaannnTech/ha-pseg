@@ -9,6 +9,11 @@ CONF_MFA_METHOD = "mfa_method"
 CONF_MFA_CODE = "mfa_code"
 CONF_AUTH_SERVER_URL = "auth_server_url"
 CONF_ELECTRIC_RATE = "electric_rate"
+CONF_AUTH_TYPE = "auth_type"
+
+AUTH_TYPE_MYMETER = "mymeter"
+AUTH_TYPE_OKTA = "okta"
+AUTH_TYPE_COOKIE = "cookie"
 
 DEFAULT_MFA_METHOD = "sms"
 DEFAULT_SCAN_INTERVAL_HOURS = 4
