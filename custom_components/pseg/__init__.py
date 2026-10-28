@@ -8,7 +8,7 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.components.frontend import add_extra_js_url
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import ConfigType
@@ -62,15 +62,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         coordinators = list(hass.data.get(DOMAIN, {}).values())
         if not coordinators:
-            _LOGGER.error("No active PSE&G integration entry found for backfill")
-            return
+            raise HomeAssistantError("No active PSE&G integration entry found for backfill")
 
+        total_imported = 0
         for coord in coordinators:
             try:
                 count = await coord.async_backfill_history(start_date=start_date, end_date=end_date)
+                total_imported += count
                 _LOGGER.info("PSE&G backfill service completed: %d records imported", count)
+            except HomeAssistantError:
+                raise
             except Exception as err:
                 _LOGGER.error("Error running PSE&G backfill service: %s", err)
+                raise HomeAssistantError(f"PSE&G backfill failed: {err}") from err
 
     hass.services.async_register(DOMAIN, "backfill_history", async_backfill_service)
 
@@ -102,15 +106,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             coordinators = list(hass.data.get(DOMAIN, {}).values())
             if not coordinators:
-                _LOGGER.error("No active PSE&G integration entry found for backfill")
-                return
+                raise HomeAssistantError("No active PSE&G integration entry found for backfill")
 
+            total_imported = 0
             for coord in coordinators:
                 try:
                     count = await coord.async_backfill_history(start_date=start_date, end_date=end_date)
+                    total_imported += count
                     _LOGGER.info("PSE&G backfill service completed: %d records imported", count)
+                except HomeAssistantError:
+                    raise
                 except Exception as err:
                     _LOGGER.error("Error running PSE&G backfill service: %s", err)
+                    raise HomeAssistantError(f"PSE&G backfill failed: {err}") from err
 
         hass.services.async_register(DOMAIN, "backfill_history", async_backfill_service)
 

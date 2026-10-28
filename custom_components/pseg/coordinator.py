@@ -11,7 +11,7 @@ import aiohttp
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
@@ -122,8 +122,8 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             )
         elif addon_offline:
             msg = (
-                "Your PSE&G session has expired and the automated Companion Add-on on port 8000 is not running. "
-                "Please start or restart the **PSE&G Auth Companion** under **Settings > Add-ons**, or go to "
+                "Your PSE&G session has expired and the companion service is not reachable. "
+                "Please verify the companion add-on or Docker container is running, or go to "
                 "**Settings > Devices & Services > PSE&G** and click **Reconfigure** to authenticate with a Browser Session Cookie."
             )
         else:
@@ -148,6 +148,67 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 translation_key="reauth_required",
                 data={"entry_id": entry_id},
             )
+
+    async def async_reauthenticate(self) -> bool:
+        """Attempt silent re-authentication with credentials via companion add-on."""
+        username = self.entry_data.get(CONF_USERNAME)
+        password = self.entry_data.get(CONF_PASSWORD)
+        if not username or not password:
+            return False
+
+        configured_url = (
+            (self.config_entry.options.get(CONF_AUTH_SERVER_URL) if self.config_entry else None)
+            or self.entry_data.get(CONF_AUTH_SERVER_URL)
+            or DEFAULT_AUTH_SERVER_URL
+        )
+
+        # Only probe user-configured companion URL (and local loopback alias if local)
+        candidate_urls = [configured_url]
+        if "127.0.0.1" in configured_url and "http://localhost:8000" not in candidate_urls:
+            candidate_urls.append("http://localhost:8000")
+        elif "localhost" in configured_url and "http://127.0.0.1:8000" not in candidate_urls:
+            candidate_urls.append("http://127.0.0.1:8000")
+
+        self._addon_connected = False
+        session = async_get_clientsession(self.hass)
+        auth_type = self.entry_data.get(CONF_AUTH_TYPE, AUTH_TYPE_MYMETER)
+
+        for auth_url in candidate_urls:
+            try:
+                async with session.post(
+                    f"{auth_url}/login",
+                    json={
+                        "username": username,
+                        "password": password,
+                        "auth_type": auth_type,
+                        "dispatch_mfa": False,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=90),
+                ) as resp:
+                    self._addon_connected = True
+                    if resp.status == 200:
+                        res_json = await resp.json()
+                        if res_json.get("success") and res_json.get("cookies"):
+                            new_cookies = res_json["cookies"]
+                            self.client.update_cookie(new_cookies)
+                            self.entry_data[CONF_COOKIE] = new_cookies
+                            if self.config_entry:
+                                self.hass.config_entries.async_update_entry(
+                                    self.config_entry,
+                                    data={**self.config_entry.data, CONF_COOKIE: new_cookies},
+                                )
+                            _LOGGER.info("Silent re-authentication successful via %s", auth_url)
+                            self.auth_required = False
+                            self.status = "connected"
+                            self._dismiss_auth_issues()
+                            return True
+                        elif res_json.get("mfa_required"):
+                            _LOGGER.warning("Silent refresh requires two-factor OTP verification")
+                            break
+            except Exception as refresh_err:
+                _LOGGER.warning("Silent refresh via %s failed: %s", auth_url, refresh_err)
+
+        return False
 
     async def _async_update_data(self) -> Dict[str, Any]:
         """Fetch data from PSE&G."""
@@ -181,81 +242,32 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             self.auth_required = True
             self.status = "auth_required"
             _LOGGER.warning("Session error: %s. Attempting silent re-authentication...", err)
-            username = self.entry_data.get(CONF_USERNAME)
-            password = self.entry_data.get(CONF_PASSWORD)
-            configured_url = (
-                (self.config_entry.options.get(CONF_AUTH_SERVER_URL) if self.config_entry else None)
-                or self.entry_data.get(CONF_AUTH_SERVER_URL)
-                or DEFAULT_AUTH_SERVER_URL
-            )
-
-            # Only probe user-configured companion URL (and local loopback alias if local)
-            candidate_urls = [configured_url]
-            if "127.0.0.1" in configured_url and "http://localhost:8000" not in candidate_urls:
-                candidate_urls.append("http://localhost:8000")
-            elif "localhost" in configured_url and "http://127.0.0.1:8000" not in candidate_urls:
-                candidate_urls.append("http://127.0.0.1:8000")
-
-            addon_connected = False
-            if username and password:
-                session = async_get_clientsession(self.hass)
-                auth_type = self.entry_data.get(CONF_AUTH_TYPE, AUTH_TYPE_MYMETER)
-                for auth_url in candidate_urls:
+            if await self.async_reauthenticate():
+                data = await self.hass.async_add_executor_job(
+                    self.client.fetch_energy_data, 14
+                )
+                records = data.get("hourly_records") or data.get("history_14d")
+                if records:
                     try:
-                        async with session.post(
-                            f"{auth_url}/login",
-                            json={
-                                "username": username,
-                                "password": password,
-                                "auth_type": auth_type,
-                                "dispatch_mfa": False,
-                            },
-                            timeout=aiohttp.ClientTimeout(total=90),
-                        ) as resp:
-                                addon_connected = True
-                                if resp.status == 200:
-                                    res_json = await resp.json()
-                                    if res_json.get("success") and res_json.get("cookies"):
-                                        new_cookies = res_json["cookies"]
-                                        self.client.update_cookie(new_cookies)
-                                        self.entry_data[CONF_COOKIE] = new_cookies
-                                        if self.config_entry:
-                                            self.hass.config_entries.async_update_entry(
-                                                self.config_entry,
-                                                data={**self.config_entry.data, CONF_COOKIE: new_cookies},
-                                            )
-                                        _LOGGER.info("Silent re-authentication successful via %s", auth_url)
-                                        data = await self.hass.async_add_executor_job(
-                                            self.client.fetch_energy_data, 14
-                                        )
-                                        records = data.get("hourly_records") or data.get("history_14d")
-                                        if records:
-                                            try:
-                                                await self.async_record_statistics(records, is_backfill=False)
-                                            except Exception as stat_err:
-                                                _LOGGER.warning("Could not record statistics into LTS: %s", stat_err)
-                                        self.next_update_time = dt_util.utcnow() + self.update_interval
-                                        data["next_update"] = self.next_update_time.isoformat()
-                                        self._last_valid_data = data
-                                        self.last_successful_update = dt_util.utcnow().isoformat()
-                                        self.auth_required = False
-                                        self.status = "connected"
-                                        self._dismiss_auth_issues()
-                                        return data
-                                    elif res_json.get("mfa_required"):
-                                        _LOGGER.warning("Silent refresh requires two-factor OTP verification")
-                                        break
-                    except Exception as refresh_err:
-                        _LOGGER.warning("Silent refresh via %s failed: %s", auth_url, refresh_err)
+                        await self.async_record_statistics(records, is_backfill=False)
+                    except Exception as stat_err:
+                        _LOGGER.warning("Could not record statistics into LTS: %s", stat_err)
+                self.next_update_time = dt_util.utcnow() + self.update_interval
+                data["next_update"] = self.next_update_time.isoformat()
+                self._last_valid_data = data
+                self.last_successful_update = dt_util.utcnow().isoformat()
+                self.auth_required = False
+                self.status = "connected"
+                self._dismiss_auth_issues()
+                return data
 
             # Silent re-authentication could not complete -> alert user and trigger Reconfigure
-            self.auth_required = True
-            self.status = "auth_required"
+            username = self.entry_data.get(CONF_USERNAME)
             is_cookie_mode = (
                 self.entry_data.get(CONF_AUTH_TYPE) == AUTH_TYPE_COOKIE
                 or not username
             )
-            addon_offline = not addon_connected if not is_cookie_mode else False
+            addon_offline = not getattr(self, "_addon_connected", False) if not is_cookie_mode else False
             self._raise_auth_issues(str(err), addon_offline=addon_offline)
             if is_cookie_mode:
                 raise ConfigEntryAuthFailed(
@@ -263,7 +275,7 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 ) from err
             if addon_offline:
                 raise ConfigEntryAuthFailed(
-                    "PSE&G Companion Add-on is offline (port 8000 unreachable). Please start or restart the companion add-on under Settings > Add-ons, or re-authenticate with a Browser Session Cookie."
+                    "PSE&G companion service is unreachable. Please verify the companion add-on or Docker container is running, or re-authenticate under Settings > Devices & Services > PSE&G > Reconfigure."
                 ) from err
             raise ConfigEntryAuthFailed(
                 "Session expired or MFA required. Please re-authenticate under Settings > Devices & Services > PSE&G."
@@ -475,12 +487,45 @@ class PsegDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             end_date_str,
         )
 
-        records = await self.hass.async_add_executor_job(
-            self.client.fetch_history_range,
-            start_date_str,
-            end_date_str,
-            90,
-        )
+        try:
+            records = await self.hass.async_add_executor_job(
+                self.client.fetch_history_range,
+                start_date_str,
+                end_date_str,
+                90,
+            )
+        except PsegAuthError as auth_err:
+            _LOGGER.warning(
+                "Session expired during history backfill (%s). Attempting silent re-authentication...",
+                auth_err,
+            )
+            if await self.async_reauthenticate():
+                records = await self.hass.async_add_executor_job(
+                    self.client.fetch_history_range,
+                    start_date_str,
+                    end_date_str,
+                    90,
+                )
+            else:
+                self.auth_required = True
+                self.status = "auth_required"
+                is_cookie_mode = (
+                    self.entry_data.get(CONF_AUTH_TYPE) == AUTH_TYPE_COOKIE
+                    or not self.entry_data.get(CONF_USERNAME)
+                )
+                addon_offline = not getattr(self, "_addon_connected", False) if not is_cookie_mode else False
+                self._raise_auth_issues(str(auth_err), addon_offline=addon_offline)
+                if is_cookie_mode:
+                    raise HomeAssistantError(
+                        "PSE&G session cookie has expired. Please re-authenticate under Settings > Devices & Services > PSE&G > Reconfigure."
+                    ) from auth_err
+                if addon_offline:
+                    raise HomeAssistantError(
+                        "PSE&G companion service is unreachable. Please verify the companion add-on or Docker container is running, or re-authenticate under Settings > Devices & Services > PSE&G > Reconfigure."
+                    ) from auth_err
+                raise HomeAssistantError(
+                    "Session expired or authentication failed. Please re-authenticate under Settings > Devices & Services > PSE&G."
+                ) from auth_err
 
         if not records:
             _LOGGER.warning("No historical records returned from PSE&G for %s to %s", start_date_str, end_date_str)
