@@ -34,8 +34,8 @@ Depending on your Home Assistant installation type and whether you prefer runnin
 
 | Method | Recommended For | Add-on Needed? | 2FA / OTP Prompts | Cookie Lifespan | Automated Renewal | Initial Setup Effort |
 |---|---|---|---|---|---|---|
-| [Option 1: Direct MyMeter Persistent Cookie](docs/authentication.md#option-1-direct-mymeter-persistent-cookie-recommended-no-add-on) | Most Users. Most convenient overall with minimal initial manual effort. No containers needed. | No | None | Long-lived (Persistent `MM_SID` with "Remember Me") | Manual re-paste on expiration | Low (one-time email invite) |
-| [Option 2: Direct MyMeter Automated Sign-In](docs/authentication.md#option-2-direct-mymeter-automated-sign-in-recommended-with-add-on) | Hands-off users running HA OS or Supervised who want fully automated background renewal. | Yes ([Auth Add-on](https://github.com/sidprax/ha-pseg-auth-addon)) | None | Auto-renewed | Fully automated and silent | Low (one-time email invite) |
+| [Option 2: Direct MyMeter Automated Sign-In (Recommended)](docs/authentication.md#option-2-direct-mymeter-automated-sign-in-recommended-with-add-on) | **Recommended**. Fully automated hands-off background renewal with zero 2FA prompts. | Yes ([Auth Add-on](https://github.com/sidprax/ha-pseg-auth-addon)) | None | Auto-renewed | Fully automated and silent | Low (one-time email invite) |
+| [Option 1: Direct MyMeter Browser Cookie](docs/authentication.md#option-1-direct-mymeter-browser-cookie-manual-no-add-on) | Users who prefer not running any companion add-on and don't mind periodic manual cookie re-entry. | No | None | Expires periodically (~24 hours) | Manual re-paste on expiration | Low (one-time email invite) |
 | [Option 3: Primary PSE&G Account Automated Sign-In](docs/authentication.md#option-3-primary-pseg-account-automated-sign-in-with-add-on-okta-2fa) | Users who prefer using their existing `pseg.com` login and don't mind entering SMS/Email OTP codes. | Yes ([Auth Add-on](https://github.com/sidprax/ha-pseg-auth-addon)) | SMS or Email OTP on setup and renewal | Auto-renewed | Requires OTP entry when prompted | Very Low (uses existing login) |
 | [Option 4: Primary PSE&G Account Session Cookie](docs/authentication.md#option-4-primary-pseg-account-session-cookie-manual-no-add-on) | Quick testing or users who only want to use their primary account without installing the companion add-on. | No | None (handled during browser login) | Short-lived (expires with browser session) | Manual re-paste on expiration | Very Low (copy from browser DevTools) |
 
@@ -88,9 +88,9 @@ This project follows a clean **two-component architecture** to keep the core Hom
 
 ### Step 2 (Optional): Install the Companion Add-on (For Automated Sign-In)
 
-If you are connecting via **Option 1 (Persistent Browser Cookie)** or **Option 4 (Session Cookie)**, skip this step entirely.
+If you are connecting via **Option 1 (Direct MyMeter Browser Cookie)** or **Option 4 (Session Cookie)**, skip this step entirely.
 
-This companion add-on is only required if you choose automated headless sign-in (**Option 2** or **Option 3**):
+This companion add-on is required for automated headless sign-in (**Option 2 (Recommended)** or **Option 3**):
 
 1. Add the companion add-on repository to Home Assistant:
 
@@ -105,8 +105,8 @@ This companion add-on is only required if you choose automated headless sign-in 
 1. In Home Assistant, go to **Settings** > **Devices & Services** > **Add Integration**.
 2. Search for **PSE&G Energy (New Jersey)**.
 3. Select your preferred authentication method from the menu:
-   - **Persistent Browser Cookie: Direct MyMeter (Recommended, No Add-on)**
    - **Automated Sign-In: Direct MyMeter (Recommended, Zero 2FA)**
+   - **Persistent Browser Cookie: Direct MyMeter (Manual, No Add-on)**
    - **Automated Sign-In: Primary PSE&G Account (Okta 2FA)**
    - **Session Browser Cookie: Primary PSE&G Account**
 4. Follow the on-screen prompts for your selected method and click **Submit**.

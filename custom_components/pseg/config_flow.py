@@ -85,18 +85,21 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         working_url = await self._async_detect_auth_server()
         if working_url:
             menu_options = [
-                "cookie_mymeter",
                 "automated_mymeter",
+                "cookie_mymeter",
                 "automated_okta",
                 "cookie_okta",
             ]
-            addon_status = ""
+            addon_status = (
+                "✨ **Companion Add-on Active**: We recommend **Automated Sign-In: Direct MyMeter** "
+                "for hands-off automated background session renewal with zero 2FA prompts.\n\n"
+            )
         else:
             menu_options = ["cookie_mymeter", "cookie_okta"]
             addon_status = (
-                "💡 **Add-on Optional**: You can connect directly using a **Persistent Browser Cookie** without any add-ons.\n\n"
-                "If you prefer automated hands-off background renewal, install the "
-                "[PSE&G Auth Companion Add-on](https://github.com/sidprax/ha-pseg-auth-addon) to enable automated sign-in.\n\n"
+                "ℹ️ **Recommended Method**: For automated background renewal without 2FA, install the "
+                "[PSE&G Auth Companion Add-on](https://github.com/sidprax/ha-pseg-auth-addon) to enable **Automated Sign-In**.\n\n"
+                "If you prefer not running the companion add-on, you can connect using a manual **Browser Cookie** below (requires periodic re-entry).\n\n"
             )
 
         return self.async_show_menu(
@@ -140,18 +143,21 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         working_url = await self._async_detect_auth_server()
         if working_url:
             menu_options = [
-                "cookie_mymeter",
                 "automated_mymeter",
+                "cookie_mymeter",
                 "automated_okta",
                 "cookie_okta",
             ]
-            addon_status = ""
+            addon_status = (
+                "✨ **Companion Add-on Active**: We recommend **Automated Sign-In: Direct MyMeter** "
+                "for hands-off automated renewal without 2FA or OTP prompts.\n\n"
+            )
         else:
             menu_options = ["cookie_mymeter", "cookie_okta"]
             addon_status = (
                 "⚠️ **PSE&G Auth Companion Add-on Not Detected**\n\n"
-                "Automated reconfiguration is disabled because the companion add-on is not running. "
-                "Update credentials using a **Browser Cookie** below, or start the companion add-on.\n\n"
+                "For hands-off automated renewal without 2FA, start the companion add-on under Settings > Add-ons. "
+                "Alternatively, you can update your connection using a manual **Browser Cookie** below.\n\n"
             )
 
         return self.async_show_menu(
