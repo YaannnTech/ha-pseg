@@ -11,6 +11,7 @@ import logging
 import re
 import time
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -19,6 +20,25 @@ from .const import DEFAULT_ELECTRIC_RATE
 _LOGGER = logging.getLogger(__name__)
 
 BASE_URL = "https://mysmartenergy.nj.pseg.com"
+# The portal's local time zone; MyMeter timestamps are wall-clock times in it.
+PORTAL_TIMEZONE = ZoneInfo("America/New_York")
+
+
+def portal_time_to_utc(x_ms: float, fold: int = 0) -> datetime:
+    """Convert a MyMeter chart timestamp to an aware UTC datetime.
+
+    MyMeter encodes the portal's local wall-clock time as if it were UTC: the
+    point for midnight on October 24 in New Jersey has x = 2026-10-24T00:00Z.
+    Reading it as a real UTC moment puts every point 4 hours (5 in winter) too
+    early, so daily statistics land on the previous day.
+
+    `fold=1` selects the second occurrence of a wall-clock time that repeats
+    when the clocks go back (both 1 AM hours carry the same x).
+    """
+    wall_clock = datetime.fromtimestamp(x_ms / 1000, tz=timezone.utc).replace(
+        tzinfo=PORTAL_TIMEZONE, fold=fold
+    )
+    return wall_clock.astimezone(timezone.utc)
 
 
 class PsegAuthError(Exception):
@@ -197,7 +217,7 @@ class PsegClient:
                             date_iso = p_start
 
                         x = pt.get("x", 0)
-                        start_utc = datetime.fromtimestamp(x / 1000, tz=timezone.utc) if x else None
+                        start_utc = portal_time_to_utc(x) if x else None
                         cost_val = round(kwh * self.effective_rate, 4)
 
                         records_map[date_iso] = {
@@ -303,10 +323,14 @@ class PsegClient:
         # Parse kWh data points and aggregate daily totals
         daily_kwh_map: dict[str, float] = {}
         parsed_pts = []
+        prev_x = None
         for pt in detailed_pts:
             if isinstance(pt, dict):
                 x = pt.get("x", 0)
-                start_utc = datetime.fromtimestamp(x / 1000, tz=timezone.utc)
+                # A repeated timestamp is the second 1 AM hour of the night
+                # the clocks go back.
+                start_utc = portal_time_to_utc(x, fold=1 if x == prev_x else 0)
+                prev_x = x
                 kwh = round(float(pt.get("y", 0.0) or 0.0), 4)
 
                 hs = pt.get("hs", {})
@@ -314,7 +338,7 @@ class PsegClient:
                 try:
                     date_iso = datetime.strptime(start_str, "%m/%d/%Y").strftime("%Y-%m-%d")
                 except Exception:
-                    date_iso = start_utc.strftime("%Y-%m-%d")
+                    date_iso = start_utc.astimezone(PORTAL_TIMEZONE).strftime("%Y-%m-%d")
 
                 daily_kwh_map[date_iso] = round(daily_kwh_map.get(date_iso, 0.0) + kwh, 4)
                 parsed_pts.append({
