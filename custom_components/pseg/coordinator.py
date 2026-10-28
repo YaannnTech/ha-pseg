@@ -24,6 +24,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    AUTH_TYPE_COOKIE,
     AUTH_TYPE_MYMETER,
     CONF_AUTH_SERVER_URL,
     CONF_AUTH_TYPE,
