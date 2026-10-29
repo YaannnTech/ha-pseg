@@ -1,0 +1,230 @@
+"""Unit tests for the MyMeter session keep-alive."""
+
+import os
+import sys
+import unittest
+from unittest.mock import MagicMock, patch
+
+import requests
+
+# Ensure repo root is on sys.path for direct unittest invocation
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+import tests.conftest  # noqa: F401  (stubs Home Assistant for direct unittest invocation)
+
+from custom_components.pseg.const import (
+    AUTH_TYPE_COOKIE,
+    AUTH_TYPE_MYMETER,
+    AUTH_TYPE_OKTA,
+    CONF_AUTH_TYPE,
+    CONF_KEEP_ALIVE,
+    CONF_USERNAME,
+    KEEPALIVE_MAX_SECONDS,
+    KEEPALIVE_MIN_SECONDS,
+    KEEPALIVE_RETRY_SECONDS,
+)
+from custom_components.pseg.coordinator import keep_alive_enabled, next_keep_alive_delay
+from custom_components.pseg.pseg_client import (
+    BASE_URL,
+    KEEPALIVE_PATH,
+    PsegAuthError,
+    PsegClient,
+    PsegConnectionError,
+    is_login_url,
+)
+
+HOST = "mysmartenergy.nj.pseg.com"
+
+
+def response(
+    status: int, url: str = f"{BASE_URL}/Dashboard", location: str = "", json_body=None
+) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status
+    resp.url = url
+    resp.is_redirect = 300 <= status < 400 and bool(location)
+    resp.headers = {"Location": location} if location else {}
+    if json_body is None:
+        resp.json.side_effect = ValueError("not JSON")
+    else:
+        resp.json.return_value = json_body
+    return resp
+
+
+class TestKeepAliveEnabled(unittest.TestCase):
+    """The toggle defaults to on for pasted cookies and off for add-on sign-ins."""
+
+    def test_default_on_for_cookie(self):
+        self.assertTrue(keep_alive_enabled({CONF_AUTH_TYPE: AUTH_TYPE_COOKIE}, {}))
+
+    def test_default_on_for_entry_without_username(self):
+        # Entries from before auth_type was stored
+        self.assertTrue(keep_alive_enabled({}, {}))
+
+    def test_default_off_for_addon(self):
+        for auth_type in (AUTH_TYPE_MYMETER, AUTH_TYPE_OKTA):
+            data = {CONF_AUTH_TYPE: auth_type, CONF_USERNAME: "user@example.com"}
+            self.assertFalse(keep_alive_enabled(data, {}))
+
+    def test_option_overrides_default(self):
+        addon = {CONF_AUTH_TYPE: AUTH_TYPE_MYMETER, CONF_USERNAME: "user@example.com"}
+        self.assertTrue(keep_alive_enabled(addon, {CONF_KEEP_ALIVE: True}))
+        self.assertFalse(keep_alive_enabled({CONF_AUTH_TYPE: AUTH_TYPE_COOKIE}, {CONF_KEEP_ALIVE: False}))
+
+
+class TestKeepAliveDelay(unittest.TestCase):
+    """Delays vary within the range instead of repeating one fixed interval."""
+
+    def test_delay_within_range_and_varies(self):
+        delays = {next_keep_alive_delay() for _ in range(50)}
+        self.assertTrue(all(KEEPALIVE_MIN_SECONDS <= d <= KEEPALIVE_MAX_SECONDS for d in delays))
+        self.assertGreater(len(delays), 1)
+
+    def test_retry_comes_before_idle_timeout(self):
+        # After the longest delay, a ping that fails is retried; the gap since the last
+        # request that reached MyMeter must stay well under its ~10 minute idle timeout
+        self.assertLess(KEEPALIVE_MAX_SECONDS + KEEPALIVE_RETRY_SECONDS, 8 * 60)
+
+
+class TestIsLoginUrl(unittest.TestCase):
+    """MyMeter sends an expired session to the portal root, where the sign-in form is."""
+
+    def test_portal_root(self):
+        self.assertTrue(is_login_url(f"{BASE_URL}/"))
+        self.assertTrue(is_login_url(f"{BASE_URL}/?%3fServiceType%3d1"))
+        self.assertTrue(is_login_url("/"))
+
+    def test_login_paths(self):
+        self.assertTrue(is_login_url(f"{BASE_URL}/Account/Login"))
+        self.assertTrue(is_login_url("https://example.okta.com/signin"))
+        self.assertTrue(is_login_url("https://login.example.com/authorize"))
+
+    def test_dashboard(self):
+        self.assertFalse(is_login_url(f"{BASE_URL}/Dashboard"))
+        self.assertFalse(is_login_url(f"{BASE_URL}/Dashboard/ChartData?_=1"))
+
+
+class TestClientKeepAlive(unittest.TestCase):
+    """PsegClient.keep_alive makes one request and reports an expired session."""
+
+    def setUp(self):
+        self.client = PsegClient(cookie="MM_SID=abc; __RequestVerificationToken=tok")
+
+    def test_valid_session(self):
+        with patch.object(self.client.session, "get", return_value=response(200)) as get:
+            self.client.keep_alive()
+        get.assert_called_once()
+        self.assertEqual(get.call_args.args[0], f"{BASE_URL}{KEEPALIVE_PATH}")
+        # The sign-in page an expired session is redirected to is not downloaded
+        self.assertFalse(get.call_args.kwargs["allow_redirects"])
+
+    def test_sent_like_the_dashboard(self):
+        with patch.object(self.client.session, "get", return_value=response(200)) as get:
+            self.client.keep_alive()
+        self.assertEqual(get.call_args.kwargs["headers"], {"X-Requested-With": "XMLHttpRequest"})
+        self.assertEqual(get.call_args.kwargs["params"]["Region"], "Usage")
+
+    def test_widgets_loaded(self):
+        # Shape of a signed-in response: widget HTML for the page to insert, no redirect
+        widgets = {
+            "AjaxResults": [
+                {"Identifier": "#widgets .widget2", "Action": "Prepend", "Value": "<div>...</div>"},
+                {"Identifier": ".swap-widget", "Action": "ReplaceElement", "Value": "<ul>...</ul>"},
+            ],
+            "Data": None,
+        }
+        with patch.object(self.client.session, "get", return_value=response(200, json_body=widgets)):
+            self.client.keep_alive()
+
+    def test_json_redirect_is_expired(self):
+        # What MyMeter answers an XHR of an expired session (checked without a session)
+        redirect = {
+            "AjaxResults": [{"Identifier": None, "Action": "Redirect", "Value": "/?%3fRegion%3dUsage"}],
+            "Data": None,
+        }
+        with patch.object(self.client.session, "get", return_value=response(200, json_body=redirect)):
+            with self.assertRaises(PsegAuthError):
+                self.client.keep_alive()
+
+    def test_redirect_to_sign_in_is_expired(self):
+        expired = response(302, location="/")
+        with patch.object(self.client.session, "get", return_value=expired):
+            with self.assertRaises(PsegAuthError):
+                self.client.keep_alive()
+
+    def test_unauthorized_is_expired(self):
+        with patch.object(self.client.session, "get", return_value=response(401)):
+            with self.assertRaises(PsegAuthError):
+                self.client.keep_alive()
+
+    def test_other_redirect_is_not_expired(self):
+        moved = response(302, location=f"{BASE_URL}/Maintenance")
+        with patch.object(self.client.session, "get", return_value=moved):
+            with self.assertRaises(PsegConnectionError):
+                self.client.keep_alive()
+
+    def test_server_error_is_connection_error(self):
+        with patch.object(self.client.session, "get", return_value=response(503)):
+            with self.assertRaises(PsegConnectionError):
+                self.client.keep_alive()
+
+    def test_network_error_is_connection_error(self):
+        with patch.object(self.client.session, "get", side_effect=requests.ConnectionError("down")):
+            with self.assertRaises(PsegConnectionError):
+                self.client.keep_alive()
+
+
+class TestConnectionExpiry(unittest.TestCase):
+    """test_connection follows redirects; landing on the portal root means expired."""
+
+    def test_redirected_to_portal_root(self):
+        client = PsegClient(cookie="MM_SID=abc")
+        with patch.object(client.session, "get", return_value=response(200, url=f"{BASE_URL}/")):
+            with self.assertRaises(PsegAuthError):
+                client.test_connection()
+
+    def test_dashboard_loaded(self):
+        client = PsegClient(cookie="MM_SID=abc")
+        with patch.object(client.session, "get", return_value=response(200)):
+            self.assertTrue(client.test_connection())
+
+
+class TestRenewedCookies(unittest.TestCase):
+    """Cookies MyMeter renews via Set-Cookie replace the stored ones."""
+
+    def test_host_only_renewal(self):
+        client = PsegClient(cookie="MM_SID=old; __RequestVerificationToken=tok")
+        client.session.cookies.set("MM_SID", "new", domain=HOST, path="/")
+        with patch.object(client.session, "get", return_value=response(200)):
+            client.keep_alive()
+        self.assertEqual(client.cookie, "MM_SID=new; __RequestVerificationToken=tok")
+
+    def test_domain_renewal_replaces_host_only_copy(self):
+        client = PsegClient(cookie="MM_SID=old; __RequestVerificationToken=tok")
+        # Set-Cookie with a Domain attribute is stored next to the host-only cookie
+        client.session.cookies.set("MM_SID", "new", domain=f".{HOST}", path="/")
+        with patch.object(client.session, "get", return_value=response(200)):
+            client.keep_alive()
+        self.assertEqual(
+            sorted(client.cookie.split("; ")),
+            ["MM_SID=new", "__RequestVerificationToken=tok"],
+        )
+        self.assertEqual([c.value for c in client.session.cookies if c.name == "MM_SID"], ["new"])
+
+    def test_no_renewal_keeps_cookie(self):
+        client = PsegClient(cookie="MM_SID=old; __RequestVerificationToken=tok")
+        with patch.object(client.session, "get", return_value=response(200)):
+            client.keep_alive()
+        self.assertEqual(client.cookie, "MM_SID=old; __RequestVerificationToken=tok")
+
+    def test_expired_session_keeps_cookie(self):
+        client = PsegClient(cookie="MM_SID=old")
+        client.session.cookies.set("MM_SID", "cleared", domain=f".{HOST}", path="/")
+        with patch.object(client.session, "get", return_value=response(302, location="/")):
+            with self.assertRaises(PsegAuthError):
+                client.keep_alive()
+        self.assertEqual(client.cookie, "MM_SID=old")
+
+
+if __name__ == "__main__":
+    unittest.main()
