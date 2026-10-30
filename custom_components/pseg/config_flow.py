@@ -34,6 +34,7 @@ from .const import (
     MFA_METHOD_SMS,
 )
 from .pseg_client import PsegAuthError, PsegClient, PsegConnectionError
+from .util import get_valid_auth_server_url, is_valid_auth_server_url, sanitize_url_for_logging
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,8 +52,12 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _async_detect_auth_server(self) -> Optional[str]:
         """Probe candidate URLs to detect if the companion auth add-on is running."""
         cached = self.context.get("auth_url")
-        if self._reauth_entry:
-            cached = cached or self._reauth_entry.data.get(CONF_AUTH_SERVER_URL)
+        if not cached and self._reauth_entry:
+            cached = get_valid_auth_server_url(
+                self._reauth_entry.options,
+                self._reauth_entry.data,
+                None,
+            )
 
         candidate_urls = []
         if cached:
@@ -63,6 +68,8 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         session = async_get_clientsession(self.hass)
         for base_url in candidate_urls:
+            if not is_valid_auth_server_url(base_url):
+                continue
             try:
                 async with session.get(
                     f"{base_url}/health",
@@ -172,6 +179,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Confirm reauth credentials and trigger sign-in."""
         errors: Dict[str, str] = {}
         existing_data = self._reauth_entry.data if self._reauth_entry else {}
+        existing_options = self._reauth_entry.options if self._reauth_entry else {}
         default_username = existing_data.get(CONF_USERNAME, "")
         default_mfa = existing_data.get(CONF_MFA_METHOD, DEFAULT_MFA_METHOD)
 
@@ -179,7 +187,11 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             username = user_input.get(CONF_USERNAME, default_username).strip()
             password = user_input.get(CONF_PASSWORD, "").strip()
             mfa_method = user_input.get(CONF_MFA_METHOD, default_mfa)
-            auth_url = existing_data.get(CONF_AUTH_SERVER_URL, DEFAULT_AUTH_SERVER_URL)
+            auth_url = get_valid_auth_server_url(
+                existing_options,
+                existing_data,
+                DEFAULT_AUTH_SERVER_URL,
+            )
 
             if not username or not password:
                 errors["base"] = "missing_credentials"
@@ -194,6 +206,8 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 session = async_get_clientsession(self.hass)
                 auth_result = None
                 for target_url in candidate_urls:
+                    if not is_valid_auth_server_url(target_url):
+                        continue
                     try:
                         async with session.post(
                             f"{target_url}/login",
@@ -203,6 +217,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 "mfa_method": mfa_method,
                                 "dispatch_mfa": True,
                             },
+                            allow_redirects=False,
                             timeout=aiohttp.ClientTimeout(total=90),
                         ) as resp:
                             connected = True
@@ -218,9 +233,17 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                     auth_result = ("mfa", None, target_url)
                                     break
                                 else:
-                                    _LOGGER.error("Auth helper response: %s", res_json)
+                                    _LOGGER.error("Auth helper failed: %s", res_json.get("error", "authentication failed"))
                                     errors["base"] = "invalid_auth"
                                     break
+                            elif 300 <= resp.status < 400:
+                                _LOGGER.warning(
+                                    "Auth helper at %s returned redirect HTTP %s; companion endpoint must not redirect",
+                                    sanitize_url_for_logging(target_url),
+                                    resp.status,
+                                )
+                                errors["base"] = "auth_server_redirect"
+                                break
                             else:
                                 try:
                                     res_json = await resp.json()
@@ -229,16 +252,16 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 if resp.status == 403 or res_json.get("recaptcha_blocked"):
                                     errors["base"] = "recaptcha_blocked"
                                 elif resp.status == 500:
-                                    _LOGGER.error("Auth helper returned 500: %s", res_json)
+                                    _LOGGER.error("Auth helper returned 500: %s", res_json.get("error", "server error"))
                                     errors["base"] = "auth_server_error"
                                 else:
                                     errors["base"] = "invalid_auth"
                                 break
                     except aiohttp.ClientConnectorError:
-                        _LOGGER.debug("Could not reach auth server at %s", target_url)
+                        _LOGGER.debug("Could not reach auth server at %s", sanitize_url_for_logging(target_url))
                         continue
                     except Exception as err:
-                        _LOGGER.exception("Reauth attempt to %s failed: %s", target_url, err)
+                        _LOGGER.exception("Reauth attempt to %s failed: %s", sanitize_url_for_logging(target_url), err)
                         errors["base"] = "unknown"
                         break
 
@@ -283,7 +306,9 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Automated direct sign-in via MyMeter invited account (zero 2FA)."""
         errors: Dict[str, str] = {}
-        auth_url = DEFAULT_AUTH_SERVER_URL
+        auth_url = self.context.get("auth_url") or DEFAULT_AUTH_SERVER_URL
+        if not is_valid_auth_server_url(auth_url):
+            auth_url = DEFAULT_AUTH_SERVER_URL
 
         if user_input is not None:
             username = user_input.get(CONF_USERNAME, "").strip()
@@ -302,6 +327,8 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 session = async_get_clientsession(self.hass)
                 cookies = None
                 for target_url in candidate_urls:
+                    if not is_valid_auth_server_url(target_url):
+                        continue
                     try:
                         async with session.post(
                             f"{target_url}/login",
@@ -311,6 +338,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 "auth_type": AUTH_TYPE_MYMETER,
                                 "dispatch_mfa": False,
                             },
+                            allow_redirects=False,
                             timeout=aiohttp.ClientTimeout(total=90),
                         ) as resp:
                             connected = True
@@ -326,6 +354,14 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 else:
                                     errors["base"] = "invalid_auth"
                                     break
+                            elif 300 <= resp.status < 400:
+                                _LOGGER.warning(
+                                    "Auth helper at %s returned redirect HTTP %s; companion endpoint must not redirect",
+                                    sanitize_url_for_logging(target_url),
+                                    resp.status,
+                                )
+                                errors["base"] = "auth_server_redirect"
+                                break
                             else:
                                 try:
                                     res_json = await resp.json()
@@ -339,9 +375,10 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                     errors["base"] = "invalid_auth"
                                 break
                     except aiohttp.ClientConnectorError:
+                        _LOGGER.debug("Could not reach auth server at %s", sanitize_url_for_logging(target_url))
                         continue
                     except Exception as err:
-                        _LOGGER.exception("MyMeter login error: %s", err)
+                        _LOGGER.exception("MyMeter login error via %s: %s", sanitize_url_for_logging(target_url), err)
                         errors["base"] = "unknown"
                         break
 
@@ -392,12 +429,14 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Step 2a: Automated sign-in via primary PSE&G Okta SSO."""
         errors: Dict[str, str] = {}
+        auth_url = self.context.get("auth_url") or DEFAULT_AUTH_SERVER_URL
+        if not is_valid_auth_server_url(auth_url):
+            auth_url = DEFAULT_AUTH_SERVER_URL
 
         if user_input is not None:
             username = user_input.get(CONF_USERNAME, "").strip()
             password = user_input.get(CONF_PASSWORD, "").strip()
             mfa_method = user_input.get(CONF_MFA_METHOD, DEFAULT_MFA_METHOD)
-            auth_url = DEFAULT_AUTH_SERVER_URL
 
             if not username or not password:
                 errors["base"] = "missing_credentials"
@@ -412,6 +451,8 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 session = async_get_clientsession(self.hass)
                 auth_result = None
                 for target_url in candidate_urls:
+                    if not is_valid_auth_server_url(target_url):
+                        continue
                     try:
                         async with session.post(
                             f"{target_url}/login",
@@ -422,6 +463,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 "mfa_method": mfa_method,
                                 "dispatch_mfa": True,
                             },
+                            allow_redirects=False,
                             timeout=aiohttp.ClientTimeout(total=90),
                         ) as resp:
                             connected = True
@@ -438,9 +480,17 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                     auth_result = ("mfa", None, target_url)
                                     break
                                 else:
-                                    _LOGGER.error("Auth helper response: %s", res_json)
+                                    _LOGGER.error("Auth helper failed: %s", res_json.get("error", "invalid authentication"))
                                     errors["base"] = "invalid_auth"
                                     break
+                            elif 300 <= resp.status < 400:
+                                _LOGGER.warning(
+                                    "Auth helper at %s returned redirect HTTP %s; companion endpoint must not redirect",
+                                    sanitize_url_for_logging(target_url),
+                                    resp.status,
+                                )
+                                errors["base"] = "auth_server_redirect"
+                                break
                             else:
                                 try:
                                     res_json = await resp.json()
@@ -449,18 +499,17 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 if resp.status == 403 or res_json.get("recaptcha_blocked"):
                                     errors["base"] = "recaptcha_blocked"
                                 elif resp.status == 500:
-                                    _LOGGER.error("Auth helper returned 500: %s", res_json)
+                                    _LOGGER.error("Auth helper returned 500: %s", res_json.get("error", "server error"))
                                     errors["base"] = "auth_server_error"
                                 else:
-                                    err_text = await resp.text()
-                                    _LOGGER.error("Auth helper returned status %s: %s", resp.status, err_text)
+                                    _LOGGER.error("Auth helper returned HTTP %s", resp.status)
                                     errors["base"] = "invalid_auth"
                                 break
                     except aiohttp.ClientConnectorError:
-                        _LOGGER.debug("Could not reach auth server at %s", target_url)
+                        _LOGGER.debug("Could not reach auth server at %s", sanitize_url_for_logging(target_url))
                         continue
                     except Exception as err:
-                        _LOGGER.exception("Error calling auth server at %s: %s", target_url, err)
+                        _LOGGER.exception("Error calling auth server at %s: %s", sanitize_url_for_logging(target_url), err)
                         errors["base"] = "unknown"
                         break
 
@@ -525,6 +574,8 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Step 3: Verification of 6-digit OTP code."""
         errors: Dict[str, str] = {}
         auth_url = self.context.get("auth_url", DEFAULT_AUTH_SERVER_URL)
+        if not is_valid_auth_server_url(auth_url):
+            auth_url = DEFAULT_AUTH_SERVER_URL
         username = self.context.get("username", "")
         password = self.context.get("password", "")
 
@@ -545,6 +596,7 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     async with session.post(
                         f"{auth_url}/login/mfa",
                         json={"code": code},
+                        allow_redirects=False,
                         timeout=aiohttp.ClientTimeout(total=60),
                     ) as resp:
                         if resp.status == 200:
@@ -559,6 +611,13 @@ class PsegConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             if getattr(self, "_reauth_entry", None):
                                 return await self.async_step_reauth_confirm()
                             return await self.async_step_user()
+                        elif 300 <= resp.status < 400:
+                            _LOGGER.warning(
+                                "MFA endpoint %s returned redirect HTTP %s; companion endpoint must not redirect",
+                                sanitize_url_for_logging(auth_url),
+                                resp.status,
+                            )
+                            errors["base"] = "auth_server_redirect"
                         else:
                             errors["base"] = "invalid_code"
                 except Exception as err:
@@ -716,6 +775,7 @@ class PsegOptionsFlowHandler(config_entries.OptionsFlow):
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         """Manage the PSE&G options."""
+        errors: Dict[str, str] = {}
         if user_input is not None:
             # If user left rate empty or entered <= 0, normalize to None to enable 7-day average
             rate = user_input.get(CONF_ELECTRIC_RATE)
@@ -729,11 +789,16 @@ class PsegOptionsFlowHandler(config_entries.OptionsFlow):
             # Normalize auth_server_url (allow empty for cookie-only users)
             auth_url = user_input.get(CONF_AUTH_SERVER_URL)
             if auth_url:
-                user_input[CONF_AUTH_SERVER_URL] = auth_url.strip()
+                cleaned_url = auth_url.strip()
+                if not is_valid_auth_server_url(cleaned_url):
+                    errors["base"] = "invalid_auth_server_url"
+                else:
+                    user_input[CONF_AUTH_SERVER_URL] = cleaned_url
             else:
                 user_input[CONF_AUTH_SERVER_URL] = ""
 
-            return self.async_create_entry(title="", data=user_input)
+            if not errors:
+                return self.async_create_entry(title="", data=user_input)
 
         current_rate = self.config_entry.options.get(
             CONF_ELECTRIC_RATE,
@@ -765,4 +830,5 @@ class PsegOptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=options_schema,
+            errors=errors,
         )
