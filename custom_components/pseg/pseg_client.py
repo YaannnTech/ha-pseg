@@ -22,8 +22,8 @@ from .const import DEFAULT_ELECTRIC_RATE
 _LOGGER = logging.getLogger(__name__)
 
 BASE_URL = "https://mysmartenergy.nj.pseg.com"
-# Requested by the keep-alive between scheduled updates: the dashboard's usage
-# widgets, a few kB, instead of the whole dashboard page
+# Requested by the keep-alive between scheduled updates: the dashboard's widget
+# loader with an empty region, about 100 bytes, instead of the whole dashboard page
 KEEPALIVE_PATH = "/Widget/LoadWidgets"
 # The portal's local time zone; MyMeter timestamps are wall-clock times in it.
 PORTAL_TIMEZONE = ZoneInfo("America/New_York")
@@ -168,14 +168,15 @@ class PsegClient:
     def keep_alive(self, timeout: float = 20) -> None:
         """Make one request so MyMeter does not end the session for being idle.
 
-        Sent like the dashboard's own request for its usage widgets. MyMeter answers
-        such a request of an expired session with a JSON redirect to the sign-in page
+        Sent like the dashboard's own widget requests, but with an empty region, so no
+        widgets are returned. MyMeter still counts it as activity, and answers it for an
+        expired session with a JSON redirect to the sign-in page
         (or an HTTP redirect, which is not followed, so the sign-in page isn't downloaded).
         """
         try:
             resp = self.session.get(
                 f"{BASE_URL}{KEEPALIVE_PATH}",
-                params={"Region": "Usage", "_": int(time.time() * 1000)},
+                params={"Region": "", "_": int(time.time() * 1000)},
                 headers={"X-Requested-With": "XMLHttpRequest"},
                 allow_redirects=False,
                 timeout=timeout,

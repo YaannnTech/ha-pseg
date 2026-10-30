@@ -118,28 +118,27 @@ class TestClientKeepAlive(unittest.TestCase):
         # The sign-in page an expired session is redirected to is not downloaded
         self.assertFalse(get.call_args.kwargs["allow_redirects"])
 
-    def test_sent_like_the_dashboard(self):
+    def test_sent_as_an_xhr_with_an_empty_region(self):
         with patch.object(self.client.session, "get", return_value=response(200)) as get:
             self.client.keep_alive()
         self.assertEqual(get.call_args.kwargs["headers"], {"X-Requested-With": "XMLHttpRequest"})
-        self.assertEqual(get.call_args.kwargs["params"]["Region"], "Usage")
+        # An empty value stays in the URL; a dropped one would be a different request
+        url = requests.Request("GET", get.call_args.args[0], params=get.call_args.kwargs["params"]).prepare().url
+        self.assertIn("Region=&", url)
 
-    def test_widgets_loaded(self):
-        # Shape of a signed-in response: widget HTML for the page to insert, no redirect
-        widgets = {
-            "AjaxResults": [
-                {"Identifier": "#widgets .widget2", "Action": "Prepend", "Value": "<div>...</div>"},
-                {"Identifier": ".swap-widget", "Action": "ReplaceElement", "Value": "<ul>...</ul>"},
-            ],
+    def test_signed_in_response(self):
+        # Shape of a signed-in response: No widgets to insert, no redirect
+        signed_in = {
+            "AjaxResults": [{"Identifier": ".widget", "Action": "RemoveElement", "Value": None}],
             "Data": None,
         }
-        with patch.object(self.client.session, "get", return_value=response(200, json_body=widgets)):
+        with patch.object(self.client.session, "get", return_value=response(200, json_body=signed_in)):
             self.client.keep_alive()
 
     def test_json_redirect_is_expired(self):
-        # What MyMeter answers an XHR of an expired session (checked without a session)
+        # What MyMeter answers an XHR of an expired session (checked after 16 idle minutes)
         redirect = {
-            "AjaxResults": [{"Identifier": None, "Action": "Redirect", "Value": "/?%3fRegion%3dUsage"}],
+            "AjaxResults": [{"Identifier": None, "Action": "Redirect", "Value": "/?%3fRegion%3d"}],
             "Data": None,
         }
         with patch.object(self.client.session, "get", return_value=response(200, json_body=redirect)):
