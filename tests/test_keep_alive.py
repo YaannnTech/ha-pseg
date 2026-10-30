@@ -1,9 +1,10 @@
 """Unit tests for the MyMeter session keep-alive."""
 
+from datetime import datetime, timedelta, timezone
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import requests
 
@@ -12,18 +13,27 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import tests.conftest  # noqa: F401  (stubs Home Assistant for direct unittest invocation)
 
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import UpdateFailed
+
 from custom_components.pseg.const import (
     AUTH_TYPE_COOKIE,
     AUTH_TYPE_MYMETER,
     AUTH_TYPE_OKTA,
     CONF_AUTH_TYPE,
+    CONF_COOKIE,
     CONF_KEEP_ALIVE,
+    CONF_PASSWORD,
     CONF_USERNAME,
     KEEPALIVE_MAX_SECONDS,
     KEEPALIVE_MIN_SECONDS,
     KEEPALIVE_RETRY_SECONDS,
 )
-from custom_components.pseg.coordinator import keep_alive_enabled, next_keep_alive_delay
+from custom_components.pseg.coordinator import (
+    PsegDataUpdateCoordinator,
+    keep_alive_enabled,
+    next_keep_alive_delay,
+)
 from custom_components.pseg.pseg_client import (
     BASE_URL,
     KEEPALIVE_PATH,
@@ -223,6 +233,94 @@ class TestRenewedCookies(unittest.TestCase):
             with self.assertRaises(PsegAuthError):
                 client.keep_alive()
         self.assertEqual(client.cookie, "MM_SID=old")
+
+
+class TestCoordinatorKeepAlive(unittest.IsolatedAsyncioTestCase):
+    """PsegDataUpdateCoordinator.async_keep_alive and what follows an expired session."""
+
+    def coordinator(self, entry_data):
+        hass = MagicMock()
+        hass.is_stopping = False
+
+        async def run_in_executor(func, *args):
+            return func(*args)
+
+        hass.async_add_executor_job = run_in_executor
+        client = MagicMock()
+        client.cookie = "MM_SID=abc"
+        coordinator = PsegDataUpdateCoordinator(hass, client, entry_data)
+        coordinator._raise_auth_issues = MagicMock()
+        coordinator.async_request_refresh = AsyncMock()
+        return coordinator
+
+    def cookie_entry(self):
+        return self.coordinator({CONF_AUTH_TYPE: AUTH_TYPE_COOKIE, CONF_COOKIE: "MM_SID=abc"})
+
+    async def test_valid_session(self):
+        coordinator = self.cookie_entry()
+        self.assertTrue(await coordinator.async_keep_alive())
+        coordinator.client.keep_alive.assert_called_once()
+        self.assertFalse(coordinator.auth_required)
+        coordinator.async_request_refresh.assert_not_awaited()
+
+    async def test_renewed_cookie_is_stored(self):
+        coordinator = self.cookie_entry()
+        coordinator.client.cookie = "MM_SID=new"
+        await coordinator.async_keep_alive()
+        self.assertEqual(coordinator.entry_data[CONF_COOKIE], "MM_SID=new")
+
+    async def test_unreachable_portal_asks_for_a_retry(self):
+        coordinator = self.cookie_entry()
+        coordinator.client.keep_alive.side_effect = PsegConnectionError("timeout")
+        self.assertFalse(await coordinator.async_keep_alive())
+        self.assertFalse(coordinator.auth_required)
+        coordinator.async_request_refresh.assert_not_awaited()
+
+    async def test_expired_session_starts_a_refresh(self):
+        coordinator = self.cookie_entry()
+        coordinator.client.keep_alive.side_effect = PsegAuthError("expired")
+        self.assertTrue(await coordinator.async_keep_alive())
+        self.assertTrue(coordinator.auth_required)
+        coordinator.async_request_refresh.assert_awaited_once()
+
+    async def test_expired_session_during_shutdown_is_left_alone(self):
+        coordinator = self.cookie_entry()
+        coordinator.hass.is_stopping = True
+        coordinator.client.keep_alive.side_effect = PsegAuthError("expired")
+        self.assertTrue(await coordinator.async_keep_alive())
+        self.assertFalse(coordinator.auth_required)
+        coordinator.async_request_refresh.assert_not_awaited()
+
+    async def test_no_ping_while_authentication_is_pending(self):
+        coordinator = self.cookie_entry()
+        coordinator.auth_required = True
+        self.assertTrue(await coordinator.async_keep_alive())
+        coordinator.client.keep_alive.assert_not_called()
+
+    async def test_expired_cookie_asks_the_user_and_stops_pinging(self):
+        coordinator = self.cookie_entry()
+        coordinator.client.keep_alive.side_effect = PsegAuthError("expired")
+        coordinator.client.fetch_energy_data.side_effect = PsegAuthError("expired")
+        await coordinator.async_keep_alive()
+        with self.assertRaises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+        coordinator._raise_auth_issues.assert_called_once()
+        await coordinator.async_keep_alive()
+        coordinator.client.keep_alive.assert_called_once()
+
+    async def test_expiry_during_the_reauth_cooldown_keeps_polling(self):
+        coordinator = self.coordinator(
+            {CONF_AUTH_TYPE: AUTH_TYPE_MYMETER, CONF_USERNAME: "user", CONF_PASSWORD: "secret"}
+        )
+        coordinator.client.keep_alive.side_effect = PsegAuthError("expired")
+        coordinator.client.fetch_energy_data.side_effect = PsegAuthError("expired")
+        coordinator._last_reauth_attempt = datetime.now(timezone.utc) - timedelta(seconds=15)
+        await coordinator.async_keep_alive()
+        with self.assertRaises(UpdateFailed):
+            await coordinator._async_update_data()
+        coordinator._raise_auth_issues.assert_not_called()
+        await coordinator.async_keep_alive()
+        coordinator.client.keep_alive.assert_called_once()
 
 
 if __name__ == "__main__":
